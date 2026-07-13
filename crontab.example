@@ -1,0 +1,10 @@
+# Example cron (on caesar).
+#
+# */3 * * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://admin.mercata.co.za/api/cron/health-poll
+# 0 6 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://admin.mercata.co.za/api/cron/alert-digest
+# 0 6 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://admin.mercata.co.za/api/cron/dunning
+# 0 5 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://admin.mercata.co.za/api/cron/digests
+#
+# 08:00 SAST = 06:00 UTC (SAST is UTC+2 year-round).
+# alert-digest and dunning both run at 08:00 SAST.
+# Customer digests run at 07:00 SAST (05:00 UTC); weekly tenants send on digest_day (default Mon).

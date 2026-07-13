@@ -1,0 +1,16 @@
+# Dependencies / build junk
+node_modules
+.next
+.git
+.data
+storage/invoices/**/*.pdf
+!storage/invoices/.gitkeep
+coverage
+*.md
+.env
+.env.*
+!.env.example
+npm-debug.log*
+Dockerfile
+docker-compose*.yml
+deploy

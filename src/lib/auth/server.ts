@@ -1,0 +1,37 @@
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import {
+  destroySession,
+  getSessionOperator,
+  SESSION_COOKIE,
+  type Operator,
+} from "@/lib/auth/session";
+
+export async function getCurrentOperator(): Promise<Operator | null> {
+  const jar = await cookies();
+  const token = jar.get(SESSION_COOKIE)?.value;
+  return getSessionOperator(token);
+}
+
+export async function requireOperator(): Promise<Operator> {
+  const operator = await getCurrentOperator();
+  if (!operator) {
+    redirect("/login");
+  }
+  return operator;
+}
+
+export async function logoutCurrentSession(): Promise<void> {
+  const jar = await cookies();
+  const token = jar.get(SESSION_COOKIE)?.value;
+  if (token) {
+    await destroySession(token);
+  }
+  jar.set(SESSION_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    expires: new Date(0),
+  });
+}

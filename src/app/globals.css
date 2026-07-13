@@ -1,0 +1,116 @@
+@import "tailwindcss";
+
+/* ─── Karoo Gold palette (scoped; re-theme by swapping data-palette) ───── */
+
+[data-palette="karoo-gold"] {
+  /* Brand — from the live site */
+  --primary: #1a2b4a;
+  --primary-light: #2a4068;
+  --primary-dark: #0f1a2e;
+  --accent: #e0a82e; /* fills and rules ONLY */
+  --accent-strong: #946f09; /* anything with text on/in it */
+  --accent-light: #f0c04a;
+  --background: #f8f7f5;
+  --surface: #ffffff;
+  --foreground: #121820;
+  --muted: #5c6470;
+  --border: #e2e0db;
+
+  /* Status ramp — deliberately not gold */
+  --status-ok: #2e6b4f;
+  --status-warn: #c0561b;
+  --status-error: #9b1d20;
+  --status-idle: #5c6470;
+
+  --radius: 4px;
+  --sidebar-label: rgb(255 255 255 / 0.72);
+  --sidebar-label-active: #ffffff;
+}
+
+/* ─── Tailwind theme bridge — components use these tokens, never hex ───── */
+
+@theme inline {
+  --color-primary: var(--primary);
+  --color-primary-light: var(--primary-light);
+  --color-primary-dark: var(--primary-dark);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-light: var(--accent-light);
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-status-ok: var(--status-ok);
+  --color-status-warn: var(--status-warn);
+  --color-status-error: var(--status-error);
+  --color-status-idle: var(--status-idle);
+
+  --font-sans: var(--font-plex-sans), "IBM Plex Sans", ui-sans-serif, sans-serif;
+  --font-display: var(--font-spectral), Spectral, Georgia, serif;
+  --font-mono: var(--font-plex-mono), "IBM Plex Mono", ui-monospace, monospace;
+
+  --radius-sm: var(--radius);
+  --radius-DEFAULT: var(--radius);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Tabular numerals mandatory for money */
+.tabular-nums,
+[data-money] {
+  font-variant-numeric: tabular-nums;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Dense admin tables */
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.admin-table th,
+.admin-table td {
+  height: 34px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.admin-table th {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: var(--surface);
+}
+
+.admin-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.admin-table tbody tr:hover td {
+  background: color-mix(in srgb, var(--background) 80%, var(--surface));
+}

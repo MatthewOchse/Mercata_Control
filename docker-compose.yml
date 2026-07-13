@@ -1,0 +1,109 @@
+# Mercata Control Plane — runs on caesar at ~/caesar/control
+#
+# mercata_admin joins internal `control` + external `caddy_net` (like geist_web pattern).
+# mercata_control_db stays on `control` only — never on caddy_net, never shared with tenants.
+#
+# No host ports published.
+
+name: mercata-control
+
+services:
+  mercata_control_db:
+    image: mysql:8.4
+    container_name: mercata_control_db
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: mercata_control
+      MYSQL_USER: mercata_admin
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - mercata_control_mysql_data:/var/lib/mysql
+      - ./deploy/mysql/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - control
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 25s
+    # No ports: — internal only
+
+  mercata_admin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    image: mercata-admin:latest
+    container_name: mercata_admin
+    restart: unless-stopped
+    depends_on:
+      mercata_control_db:
+        condition: service_healthy
+    env_file:
+      - ./.env
+    environment:
+      NODE_ENV: production
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+      DATABASE_URL: mysql://mercata_admin:${MYSQL_PASSWORD}@mercata_control_db:3306/mercata_control
+      APP_URL: https://admin.mercata.co.za
+    volumes:
+      - mercata_control_invoices:/app/storage/invoices
+    networks:
+      - control
+      - caddy_net
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>r.json()).then(j=>process.exit(j.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+    # No ports: — reach via Caddy on caddy_net only
+
+  # One-shot: docker compose --profile tools run --rm migrate
+  migrate:
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: tools
+    image: mercata-admin-tools:latest
+    env_file:
+      - ./.env
+    environment:
+      DATABASE_URL: mysql://mercata_admin:${MYSQL_PASSWORD}@mercata_control_db:3306/mercata_control
+    volumes:
+      - ./migrations:/app/migrations:ro
+      - ./scripts:/app/scripts:ro
+      - ./src:/app/src:ro
+    networks:
+      - control
+    depends_on:
+      mercata_control_db:
+        condition: service_healthy
+    command: ["npx", "tsx", "scripts/migrate.ts"]
+
+volumes:
+  mercata_control_mysql_data:
+  mercata_control_invoices:
+
+networks:
+  control:
+    driver: bridge
+    name: mercata_control_net
+  caddy_net:
+    external: true

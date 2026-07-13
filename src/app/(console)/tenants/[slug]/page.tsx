@@ -1,0 +1,191 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { TopBar } from "@/components/layout/top-bar";
+import { Money, StatusPill } from "@/components/ui/status";
+import { formatSastDateTime } from "@/lib/datetime";
+import {
+  activeRecurringMrr,
+  currentSubscription,
+  getAddons,
+  getInvoices,
+  getPayments,
+  getSubscriptions,
+  getTenantAuditLog,
+  getTenantBySlug,
+  getTenantContacts,
+  getTenantInfra,
+  listPlans,
+  outstandingBalanceCents,
+} from "@/lib/tenants/queries";
+import {
+  invoiceStatusLabel,
+  invoiceStatusTone,
+  tenantStatusLabel,
+  tenantStatusTone,
+} from "@/lib/tenants/status";
+import { ActivityTab } from "./tabs/activity";
+import { BillingTab } from "./tabs/billing";
+import { DigestTab } from "./tabs/digest";
+import { InfraTab } from "./tabs/infra";
+import { LifecyclePanel } from "./lifecycle-panel";
+import { OverviewTab } from "./tabs/overview";
+
+const TABS = [
+  { id: "overview", label: "Overview" },
+  { id: "billing", label: "Billing" },
+  { id: "digest", label: "Digest" },
+  { id: "infra", label: "Infra" },
+  { id: "activity", label: "Activity" },
+] as const;
+
+type TabId = (typeof TABS)[number]["id"];
+
+export default async function TenantDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ slug: string }>;
+  searchParams: Promise<{ tab?: string }>;
+}) {
+  const { slug } = await params;
+  const sp = await searchParams;
+  const tab = (TABS.some((t) => t.id === sp.tab) ? sp.tab : "overview") as TabId;
+
+  const tenant = await getTenantBySlug(slug);
+  if (!tenant) notFound();
+
+  const [
+    contacts,
+    infra,
+    subscriptions,
+    addons,
+    invoices,
+    payments,
+    outstanding,
+    audit,
+    plans,
+  ] = await Promise.all([
+    getTenantContacts(tenant.id),
+    getTenantInfra(tenant.id),
+    getSubscriptions(tenant.id),
+    getAddons(tenant.id),
+    getInvoices(tenant.id),
+    getPayments(tenant.id),
+    outstandingBalanceCents(tenant.id),
+    getTenantAuditLog(tenant.id, tenant.slug),
+    listPlans(),
+  ]);
+
+  const current = currentSubscription(subscriptions);
+  const mrr =
+    (current?.current_monthly_cents ?? 0) + activeRecurringMrr(addons);
+
+  return (
+    <>
+      <TopBar title={tenant.trading_name} />
+      <main className="p-5">
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-[18px] font-semibold text-foreground">
+                {tenant.trading_name}
+              </h2>
+              <StatusPill
+                tone={tenantStatusTone(tenant.status)}
+                label={tenantStatusLabel(tenant.status)}
+              />
+              <StatusPill tone="idle" label="Unknown" />
+            </div>
+            <div className="mt-1 flex flex-wrap gap-3 text-[12px] text-muted">
+              <span className="font-mono">{tenant.slug}</span>
+              <span>{tenant.legal_name}</span>
+              {current ? (
+                <span>
+                  {current.plan_name} ·{" "}
+                  <Money cents={mrr} className="text-accent-strong" />
+                  /mo
+                </span>
+              ) : null}
+            </div>
+          </div>
+          <Link
+            href="/tenants"
+            className="text-[13px] text-muted hover:text-foreground"
+          >
+            ← Tenants
+          </Link>
+        </div>
+
+        <LifecyclePanel
+          slug={tenant.slug}
+          status={tenant.status}
+          plans={plans}
+          currentPlanCode={current?.plan_code ?? null}
+        />
+
+        <nav className="mt-5 flex gap-1 border-b border-border">
+          {TABS.map((t) => {
+            const active = tab === t.id;
+            return (
+              <Link
+                key={t.id}
+                href={`/tenants/${tenant.slug}?tab=${t.id}`}
+                className={`relative px-3 py-2 text-[13px] ${
+                  active
+                    ? "font-semibold text-foreground"
+                    : "text-muted hover:text-foreground"
+                }`}
+              >
+                {t.label}
+                {active ? (
+                  <span className="absolute inset-x-3 -bottom-px h-0.5 bg-accent" />
+                ) : null}
+              </Link>
+            );
+          })}
+        </nav>
+
+        <div className="mt-4">
+          {tab === "overview" ? (
+            <OverviewTab
+              tenant={tenant}
+              contacts={contacts}
+              infra={infra}
+              current={current}
+              mrrCents={mrr}
+            />
+          ) : null}
+          {tab === "billing" ? (
+            <BillingTab
+              slug={tenant.slug}
+              status={tenant.status}
+              subscriptions={subscriptions}
+              addons={addons}
+              invoices={invoices}
+              payments={payments}
+              outstandingCents={outstanding}
+              invoiceStatusLabel={invoiceStatusLabel}
+              invoiceStatusTone={invoiceStatusTone}
+            />
+          ) : null}
+          {tab === "digest" ? (
+            <DigestTab
+              slug={tenant.slug}
+              cadence={tenant.digest_cadence}
+              digestDay={tenant.digest_day}
+              ga4PropertyId={tenant.ga4_property_id}
+              brandPrimaryColor={tenant.brand_primary_color}
+              brandLogoUrl={tenant.brand_logo_url}
+            />
+          ) : null}
+          {tab === "infra" ? (
+            <InfraTab slug={tenant.slug} infra={infra} status={tenant.status} />
+          ) : null}
+          {tab === "activity" ? (
+            <ActivityTab rows={audit} formatSastDateTime={formatSastDateTime} />
+          ) : null}
+        </div>
+      </main>
+    </>
+  );
+}
