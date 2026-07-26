@@ -98,7 +98,8 @@ CREATE TABLE IF NOT EXISTS plans (
 INSERT INTO plans (code, name, monthly_cents, active) VALUES
   ('online', 'Online', 150000, 1),
   ('retail', 'Retail', 220000, 1),
-  ('retail_pro', 'Retail Pro', 280000, 1)
+  ('retail_pro', 'Retail Pro', 280000, 0),
+  ('service_hosting', 'Service Hosting', 40000, 1)
 ON DUPLICATE KEY UPDATE name = VALUES(name);
 
 CREATE TABLE IF NOT EXISTS subscriptions (

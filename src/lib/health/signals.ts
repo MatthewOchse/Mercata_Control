@@ -6,6 +6,7 @@ import {
   SITE_DOWN_CONSECUTIVE,
   SLOW_CONSECUTIVE,
   SLOW_MS,
+  planExpectsOrders,
   type AlertSignal,
   type FleetHealthPayload,
   type PollResult,
@@ -40,7 +41,6 @@ export function evaluateSignals(
   poll: PollResult,
   recent: RecentCheck[],
 ): SignalEvaluation[] {
-  // recent is newest-first, excluding the poll just stored (or including — we pass history before current)
   const withCurrent: RecentCheck[] = [
     {
       ok: poll.ok,
@@ -53,7 +53,7 @@ export function evaluateSignals(
 
   const signals: SignalEvaluation[] = [];
 
-  // site_down — 2 consecutive failed polls
+  // site_down — 2 consecutive failed polls (origin or fleet endpoint unreachable)
   const lastN = withCurrent.slice(0, SITE_DOWN_CONSECUTIVE);
   const siteDown =
     lastN.length >= SITE_DOWN_CONSECUTIVE && lastN.every((c) => !c.ok);
@@ -66,7 +66,7 @@ export function evaluateSignals(
     },
   });
 
-  // db_unreachable — from health payload
+  // db_unreachable — from health payload (fleet answered)
   const dbReachable = poll.payload?.db?.reachable;
   const dbUnreachable = poll.fleetOk && dbReachable === false;
   signals.push({
@@ -77,8 +77,7 @@ export function evaluateSignals(
 
   // cert_expiring — fewer than 14 days
   const certDays = poll.certDaysRemaining;
-  const certExpiring =
-    certDays !== null && certDays < CERT_WARN_DAYS;
+  const certExpiring = certDays !== null && certDays < CERT_WARN_DAYS;
   signals.push({
     signal: "cert_expiring",
     active: certExpiring,
@@ -109,7 +108,7 @@ export function evaluateSignals(
     detail: { pending_migrations: pending },
   });
 
-  // sales_silence — no order in 7 days for a tenant that normally has them
+  // sales_silence — commerce plans only
   signals.push(evaluateSalesSilence(poll, withCurrent));
 
   void SIGNAL_SEVERITY;
@@ -120,6 +119,14 @@ function evaluateSalesSilence(
   poll: PollResult,
   history: RecentCheck[],
 ): SignalEvaluation {
+  if (!planExpectsOrders(poll.planCode)) {
+    return {
+      signal: "sales_silence",
+      active: false,
+      detail: { reason: "plan_no_orders", plan_code: poll.planCode },
+    };
+  }
+
   const lastOrderAt = poll.payload?.storefront?.last_order_at ?? null;
   if (!lastOrderAt) {
     return {
@@ -142,8 +149,6 @@ function evaluateSalesSilence(
   const silenceDays = silenceMs / (1000 * 60 * 60 * 24);
   const currentlySilent = silenceDays >= SALES_SILENCE_DAYS;
 
-  // Baseline: did this tenant show fresh orders in the last 30 days of checks?
-  // A check counts as "normally has orders" if at check time last_order_at was < 7 days old.
   let hadActiveBaseline = false;
   for (const check of history) {
     const lo = check.payload?.storefront?.last_order_at;

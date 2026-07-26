@@ -46,7 +46,7 @@ export function digestSastIsoWeekday(now: Date = new Date()): number {
 
 function parseYmd(ymd: string): { y: number; m: number; d: number } {
   const [y, m, d] = ymd.split("-").map(Number);
-  return { y, m, d };
+  return { y: y!, m: m!, d: d! };
 }
 
 function ymdFromUtcNoon(y: number, m: number, d: number): string {
@@ -81,14 +81,16 @@ export type DigestPeriodPair = {
 
 /**
  * Period covered by a digest sent on `sendDate` (SAST YYYY-MM-DD).
- * Weekly: previous 7 complete days ending yesterday.
- * Daily: yesterday only.
+ * daily → yesterday
+ * weekly → previous Mon–Sun (calendar week before the send week's Monday)
+ * monthly → previous calendar month
  */
 export function periodsForDigest(
   cadence: Exclude<DigestCadence, "off">,
   sendDate: string = digestSastToday(),
 ): DigestPeriodPair {
   const yesterday = addDaysYmd(sendDate, -1);
+
   if (cadence === "daily") {
     const prev = addDaysYmd(yesterday, -1);
     return {
@@ -105,14 +107,50 @@ export function periodsForDigest(
     };
   }
 
-  const periodFrom = addDaysYmd(yesterday, -6);
+  if (cadence === "monthly") {
+    const { y, m } = parseYmd(sendDate);
+    // Previous month: day 0 of current month
+    const prevMonthLast = new Date(Date.UTC(y, m - 1, 0));
+    const prevTo = `${prevMonthLast.getUTCFullYear()}-${pad2(prevMonthLast.getUTCMonth() + 1)}-${pad2(prevMonthLast.getUTCDate())}`;
+    const prevFrom = `${prevMonthLast.getUTCFullYear()}-${pad2(prevMonthLast.getUTCMonth() + 1)}-01`;
+    // Month before that
+    const beforeLast = new Date(Date.UTC(y, m - 2, 0));
+    const beforeTo = `${beforeLast.getUTCFullYear()}-${pad2(beforeLast.getUTCMonth() + 1)}-${pad2(beforeLast.getUTCDate())}`;
+    const beforeFrom = `${beforeLast.getUTCFullYear()}-${pad2(beforeLast.getUTCMonth() + 1)}-01`;
+    return {
+      period: {
+        from: prevFrom,
+        to: prevTo,
+        label: formatPeriodLabel(prevFrom, prevTo),
+      },
+      previous: {
+        from: beforeFrom,
+        to: beforeTo,
+        label: formatPeriodLabel(beforeFrom, beforeTo),
+      },
+    };
+  }
+
+  // Weekly: previous complete Mon–Sun relative to send date
+  // Find Monday of the week containing sendDate, then previous Mon–Sun
+  const wd = (() => {
+    // Use ISO weekday of sendDate in civil terms via UTC noon trick + SAST weekday table
+    const { y, m, d } = parseYmd(sendDate);
+    const utc = new Date(Date.UTC(y, m - 1, d, 12));
+    // getUTCDay: 0=Sun..6=Sat → ISO 1=Mon..7=Sun
+    const sun0 = utc.getUTCDay();
+    return sun0 === 0 ? 7 : sun0;
+  })();
+  const thisMonday = addDaysYmd(sendDate, -(wd - 1));
+  const periodTo = addDaysYmd(thisMonday, -1); // Sunday before this Monday
+  const periodFrom = addDaysYmd(periodTo, -6); // Monday of that week
   const prevTo = addDaysYmd(periodFrom, -1);
   const prevFrom = addDaysYmd(prevTo, -6);
   return {
     period: {
       from: periodFrom,
-      to: yesterday,
-      label: formatPeriodLabel(periodFrom, yesterday),
+      to: periodTo,
+      label: formatPeriodLabel(periodFrom, periodTo),
     },
     previous: {
       from: prevFrom,
@@ -130,6 +168,10 @@ export function shouldSendDigestToday(opts: {
 }): boolean {
   if (opts.cadence === "off") return false;
   if (opts.cadence === "daily") return true;
+  if (opts.cadence === "monthly") {
+    const { day } = sastYmdParts(opts.now ?? new Date());
+    return day === 1;
+  }
   const day = digestSastIsoWeekday(opts.now);
   return day === opts.digestDay;
 }

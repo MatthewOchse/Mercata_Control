@@ -3,12 +3,14 @@
 import Link from "next/link";
 import { useActionState, useState, useTransition } from "react";
 import {
+  approveOneAction,
   creditNoteAction,
   deleteDraftAction,
   issueOneAction,
   markOverdueAction,
   markPaidAction,
   resendInvoiceEmailAction,
+  unapproveOneAction,
   voidAction,
   type ActionState,
 } from "@/app/(console)/billing/actions";
@@ -23,9 +25,17 @@ import {
   invoiceStatusLabel,
   invoiceStatusTone,
 } from "@/lib/tenants/status";
+import { ManualDraftEditor } from "./manual-draft-editor";
 
 const empty: ActionState = {};
 const payEmpty: PaymentActionState = {};
+
+const btnBase =
+  "inline-flex h-8 items-center justify-center rounded-[4px] px-3 text-[12px] font-semibold transition-colors disabled:pointer-events-none disabled:opacity-50";
+const btnPrimary = `${btnBase} bg-accent-strong text-white hover:bg-primary hover:text-white`;
+const btnNeutral = `${btnBase} border border-border bg-surface text-foreground hover:border-primary-light hover:bg-primary hover:text-white`;
+const btnWarn = `${btnBase} border border-status-warn bg-surface text-status-warn hover:bg-status-warn hover:text-white`;
+const btnDanger = `${btnBase} border border-status-error bg-surface text-status-error hover:bg-status-error hover:text-white`;
 
 export function InvoiceDetailClient({
   invoice,
@@ -49,8 +59,59 @@ export function InvoiceDetailClient({
     });
   }
 
+  const isDraft = invoice.status === "draft";
+  const approved = Boolean(invoice.approved_at);
+
   return (
     <div className="space-y-5">
+      {isDraft && invoice.needs_attention ? (
+        <div className="rounded-[4px] border-2 border-status-warn bg-status-warn/10 px-3 py-2 text-[13px] text-status-warn">
+          <strong>NEEDS ATTENTION</strong> —{" "}
+          {invoice.attention_reason ?? "this draft is incomplete"}. It cannot be
+          approved or issued until the figure is resolved. Fix it on the{" "}
+          <Link href="/billing/run" className="underline">
+            billing run
+          </Link>{" "}
+          screen, where you can enter the sales figure by hand or waive the
+          commission on the record.
+        </div>
+      ) : null}
+
+      {isDraft && !invoice.needs_attention ? (
+        approved ? (
+          <div className="flex flex-wrap items-center gap-2 rounded-[4px] border border-status-ok bg-status-ok/10 px-3 py-2 text-[13px] text-status-ok">
+            <span>
+              <strong>Approved</strong>
+              {invoice.approved_by ? ` by ${invoice.approved_by}` : ""} — cleared
+              to issue.
+            </span>
+            <button
+              type="button"
+              className="underline"
+              disabled={pending}
+              onClick={() => run(() => unapproveOneAction(invoice.id))}
+            >
+              Withdraw approval
+            </button>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-3 rounded-[4px] border border-border bg-surface px-3 py-2 text-[13px]">
+            <span className="text-muted">
+              This draft has not been approved yet. Nothing is emailed or charged
+              until it is.
+            </span>
+            <button
+              type="button"
+              className={btnPrimary}
+              disabled={pending}
+              onClick={() => run(() => approveOneAction(invoice.id))}
+            >
+              Approve
+            </button>
+          </div>
+        )
+      ) : null}
+
       {invoice.unsent ? (
         <div className="rounded-[4px] border-2 border-status-error bg-status-error/10 px-3 py-2 text-[13px] text-status-error">
           <strong>UNSENT</strong> — this invoice is issued but was never emailed
@@ -76,6 +137,9 @@ export function InvoiceDetailClient({
               tone={invoiceStatusTone(invoice.status)}
               label={invoiceStatusLabel(invoice.status)}
             />
+            {invoice.source === "manual" ? (
+              <StatusPill tone="idle" label="Custom" />
+            ) : null}
             {invoice.sent_at ? (
               <StatusPill tone="ok" label="Sent" />
             ) : invoice.status !== "draft" ? (
@@ -104,9 +168,14 @@ export function InvoiceDetailClient({
           <>
             <button
               type="button"
-              disabled={pending}
+              disabled={pending || !approved || invoice.needs_attention}
               onClick={() => run(() => issueOneAction(invoice.id))}
-              className="h-8 rounded-[4px] bg-accent-strong px-3 text-[12px] font-semibold text-white"
+              className={btnPrimary}
+              title={
+                approved
+                  ? undefined
+                  : "Approve the draft first — issuing is final"
+              }
             >
               Issue &amp; email
             </button>
@@ -114,7 +183,7 @@ export function InvoiceDetailClient({
               type="button"
               disabled={pending}
               onClick={() => run(() => deleteDraftAction(invoice.id))}
-              className="h-8 rounded-[4px] border border-status-error px-3 text-[12px] text-status-error"
+              className={btnDanger}
             >
               Delete draft
             </button>
@@ -126,7 +195,7 @@ export function InvoiceDetailClient({
               type="button"
               disabled={pending}
               onClick={() => run(() => markPaidAction(invoice.id))}
-              className="h-8 rounded-[4px] bg-accent-strong px-3 text-[12px] font-semibold text-white"
+              className={btnPrimary}
             >
               Mark paid
             </button>
@@ -135,7 +204,7 @@ export function InvoiceDetailClient({
                 type="button"
                 disabled={pending}
                 onClick={() => run(() => markOverdueAction(invoice.id))}
-                className="h-8 rounded-[4px] border border-status-warn px-3 text-[12px] text-status-warn"
+                className={btnWarn}
               >
                 Mark overdue
               </button>
@@ -144,7 +213,7 @@ export function InvoiceDetailClient({
               type="button"
               disabled={pending}
               onClick={() => run(() => voidAction(invoice.id))}
-              className="h-8 rounded-[4px] border border-status-error px-3 text-[12px] text-status-error"
+              className={btnDanger}
             >
               Void
             </button>
@@ -152,7 +221,7 @@ export function InvoiceDetailClient({
               type="button"
               disabled={pending}
               onClick={() => run(() => resendInvoiceEmailAction(invoice.id))}
-              className="h-8 rounded-[4px] border border-border px-3 text-[12px]"
+              className={btnNeutral}
             >
               Email PDF
             </button>
@@ -161,10 +230,16 @@ export function InvoiceDetailClient({
         {invoice.pdf_path ? (
           <a
             href={`/invoices/${invoice.id}/pdf`}
-            className="h-8 rounded-[4px] border border-border px-3 text-[12px] leading-8"
+            target="_blank"
+            rel="noopener noreferrer"
+            className={btnNeutral}
           >
-            Download PDF
+            View PDF
           </a>
+        ) : invoice.status === "draft" ? (
+          <span className="inline-flex h-8 items-center text-[12px] text-muted">
+            PDF available after issue
+          </span>
         ) : null}
       </div>
 
@@ -175,30 +250,77 @@ export function InvoiceDetailClient({
         <p className="text-[12px] text-status-ok">{msg.message}</p>
       ) : null}
 
-      <table className="admin-table">
-        <thead>
-          <tr>
-            <th>Description</th>
-            <th className="text-right">Qty</th>
-            <th className="text-right">Unit</th>
-            <th className="text-right">Amount</th>
-          </tr>
-        </thead>
-        <tbody>
-          {invoice.lines.map((l) => (
-            <tr key={l.id}>
-              <td>{l.description}</td>
-              <td className="text-right font-mono text-[12px]">{l.quantity}</td>
-              <td className="text-right">
-                <Money cents={l.unit_cents} />
-              </td>
-              <td className="text-right">
-                <Money cents={l.line_total_cents} />
-              </td>
+      {invoice.status === "draft" && invoice.source === "manual" ? (
+        <ManualDraftEditor invoice={invoice} />
+      ) : null}
+
+      {invoice.pdf_path ? (
+        <section className="overflow-hidden rounded-[4px] border border-border bg-surface">
+          <div className="flex items-center justify-between border-b border-border px-3 py-2">
+            <h3 className="text-[12px] font-semibold tracking-wide text-muted uppercase">
+              PDF
+            </h3>
+            <a
+              href={`/invoices/${invoice.id}/pdf`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[12px] text-accent-strong hover:underline"
+            >
+              Open in new tab
+            </a>
+          </div>
+          <iframe
+            title={`Invoice ${invoice.invoice_number ?? invoice.id} PDF`}
+            src={`/invoices/${invoice.id}/pdf`}
+            className="h-[min(70vh,720px)] w-full bg-white"
+          />
+        </section>
+      ) : null}
+
+      {invoice.status === "draft" && invoice.source === "manual" ? null : (
+        <table className="admin-table">
+          <thead>
+            <tr>
+              <th>Description</th>
+              <th className="text-right">Qty</th>
+              <th className="text-right">Unit</th>
+              <th className="text-right">Amount</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {invoice.lines.map((l) => (
+              <tr key={l.id}>
+                <td>{l.description}</td>
+                <td className="text-right font-mono text-[12px]">{l.quantity}</td>
+                <td className="text-right">
+                  <Money cents={l.unit_cents} />
+                </td>
+                <td className="text-right">
+                  <Money cents={l.line_total_cents} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {invoice.commission_cents !== null &&
+      invoice.commission_basis_cents !== null ? (
+        <p className="text-[12px] text-muted">
+          Commission is{" "}
+          {Number(((invoice.commission_rate ?? 0) * 100).toFixed(2))}% of gross
+          sales for the period, before refunds. Basis:{" "}
+          <Money
+            cents={invoice.commission_basis_cents}
+            className="text-foreground"
+          />{" "}
+          measured{" "}
+          {invoice.sales_period_start
+            ? `${formatIsoDate(invoice.sales_period_start)} → ${formatIsoDate(invoice.sales_period_end ?? invoice.sales_period_start)}`
+            : "for the sales month"}
+          {invoice.sales_source ? `, read from ${invoice.sales_source}` : ""}.
+        </p>
+      ) : null}
 
       <dl className="ml-auto grid max-w-xs grid-cols-[1fr_auto] gap-x-6 gap-y-1 text-[13px]">
         <dt className="text-muted">Subtotal</dt>
@@ -279,7 +401,7 @@ export function InvoiceDetailClient({
             <button
               type="submit"
               disabled={payPending}
-              className="h-8 rounded-[4px] bg-accent-strong px-3 text-[12px] font-semibold text-white"
+              className={btnPrimary}
             >
               Save payment
             </button>
@@ -346,7 +468,7 @@ export function InvoiceDetailClient({
             <button
               type="submit"
               disabled={cnPending}
-              className="h-8 rounded-[4px] border border-status-error px-3 text-[12px] font-semibold text-status-error hover:bg-status-error hover:text-white"
+              className={btnDanger}
             >
               Issue credit note
             </button>

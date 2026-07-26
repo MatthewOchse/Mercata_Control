@@ -14,31 +14,41 @@ export const dynamic = "force-dynamic";
 
 /**
  * Exact HTML a customer would receive — full-bleed, no admin chrome.
+ * Optional ?period=YYYY-MM-DD uses that SAST calendar day as the send date
+ * (period windows are derived the same as the cron).
  */
 export default async function DigestPreviewPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<{ period?: string }>;
 }) {
   await requireOperator();
   const { slug } = await params;
+  const sp = await searchParams;
   const tenant = await getDigestTenantBySlug(slug);
   if (!tenant) notFound();
 
   const recipients = await digestRecipients(tenant.id);
   const previewEmail = recipients[0] ?? "preview@mercata.co.za";
+  const sendDate =
+    sp.period && /^\d{4}-\d{2}-\d{2}$/.test(sp.period) ? sp.period : undefined;
 
   let html: string;
   let subject: string;
   let error: string | null = null;
+  let periodLabel = "";
 
   try {
     const cadence =
       tenant.digest_cadence === "off" ? "weekly" : tenant.digest_cadence;
     const payload = await buildDigestPayload(tenant, previewEmail, {
       cadenceOverride: cadence,
+      sendDate,
     });
     subject = renderDigestSubject(payload);
+    periodLabel = payload.period.label;
     html = renderDigestHtml(payload);
   } catch (err) {
     subject = "Digest preview failed";
@@ -65,6 +75,9 @@ export default async function DigestPreviewPage({
         <strong>Digest preview</strong>
         <span style={{ opacity: 0.85 }}>{tenant.trading_name}</span>
         <span style={{ opacity: 0.7 }}>Subject: {subject}</span>
+        {periodLabel ? (
+          <span style={{ opacity: 0.7 }}>Period: {periodLabel}</span>
+        ) : null}
         {error ? (
           <span style={{ color: "#f0c04a" }}>{error}</span>
         ) : (

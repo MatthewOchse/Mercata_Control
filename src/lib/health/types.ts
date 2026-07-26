@@ -53,6 +53,8 @@ export type FleetHealthPayload = {
 export type PollResult = {
   tenantId: number;
   slug: string;
+  /** Active plan code when known (e.g. service_hosting has no store orders). */
+  planCode: string | null;
   ok: boolean;
   latencyMs: number | null;
   certDaysRemaining: number | null;
@@ -61,3 +63,19 @@ export type PollResult = {
   payload: FleetHealthPayload | null;
   error: string | null;
 };
+
+/** Plans that never have commerce orders — skip sales_silence. */
+export function planExpectsOrders(planCode: string | null | undefined): boolean {
+  if (!planCode) return true;
+  return planCode !== "service_hosting";
+}
+
+/**
+ * Retail storefronts expose /api/_fleet/health. Sites (brochure) deploys do not —
+ * probing the fleet endpoint there always 404s and falsely raises site_down.
+ */
+export function planExpectsFleetHealth(
+  planCode: string | null | undefined,
+): boolean {
+  return planExpectsOrders(planCode);
+}

@@ -1,4 +1,5 @@
 import { decryptSecret } from "@/lib/crypto/secrets";
+import { fetchFleetAuthorized } from "@/lib/health/fleet-fetch";
 import {
   aovCents,
   type AnalyticsSource,
@@ -18,6 +19,9 @@ type FleetStatsJson = {
   gross_sales_cents?: number;
   refunds_cents?: number;
   net_sales_cents?: number;
+  events_bookings_count?: number;
+  events_gross_cents?: number;
+  events_spaces?: number;
   top_products?: Array<{
     stock_code?: string;
     description?: string;
@@ -31,12 +35,20 @@ type FleetStatsJson = {
 function mapFleetStats(json: FleetStatsJson): SalesMetrics {
   const ordersCount = Number(json.orders_count ?? 0);
   const netSalesCents = Number(json.net_sales_cents ?? 0);
+  const hasEvents =
+    json.events_bookings_count !== undefined ||
+    json.events_gross_cents !== undefined;
   return {
     ordersCount,
     grossSalesCents: Number(json.gross_sales_cents ?? 0),
     refundsCents: Number(json.refunds_cents ?? 0),
     netSalesCents,
     averageOrderValueCents: aovCents(netSalesCents, ordersCount),
+    eventsBookingsCount: hasEvents
+      ? Number(json.events_bookings_count ?? 0)
+      : null,
+    eventsGrossCents: hasEvents ? Number(json.events_gross_cents ?? 0) : null,
+    eventsSpaces: hasEvents ? Number(json.events_spaces ?? 0) : null,
     topProducts: (json.top_products ?? []).slice(0, 5).map((p) => ({
       description: p.description?.trim() || p.stock_code || "Product",
       units: Number(p.units ?? 0),
@@ -63,29 +75,17 @@ export const fleetAnalyticsSource: AnalyticsSource = {
     url.searchParams.set("from", opts.from);
     url.searchParams.set("to", opts.to);
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 20000);
-    try {
-      const res = await fetch(url.toString(), {
-        method: "GET",
-        signal: controller.signal,
-        headers: {
-          authorization: `Bearer ${secret}`,
-          accept: "application/json",
-          "user-agent": "MercataControl/digest-stats",
-        },
-        cache: "no-store",
-      });
-      if (!res.ok) {
-        throw new Error(`Fleet stats HTTP ${res.status}`);
-      }
-      const json = (await res.json()) as FleetStatsJson;
-      if (json.error) {
-        throw new Error(`Fleet stats: ${json.error}`);
-      }
-      return mapFleetStats(json);
-    } finally {
-      clearTimeout(timer);
+    const res = await fetchFleetAuthorized(url.toString(), secret, {
+      timeoutMs: 20000,
+      userAgent: "MercataControl/digest-stats",
+    });
+    if (!res.ok) {
+      throw new Error(`Fleet stats HTTP ${res.status}`);
     }
+    const json = (await res.json()) as FleetStatsJson;
+    if (json.error) {
+      throw new Error(`Fleet stats: ${json.error}`);
+    }
+    return mapFleetStats(json);
   },
 };

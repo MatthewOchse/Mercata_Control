@@ -28,10 +28,10 @@ function daysPastDue(dueDate: string, today: string): number {
   return Math.floor((now - due) / (1000 * 60 * 60 * 24));
 }
 
-function accountsFrom(): string {
+function invoiceFrom(): string {
   return (
     process.env.INVOICE_EMAIL_FROM?.trim() ||
-    "Mercata Accounts <accounts@mercata.co.za>"
+    "Mercata Billing <billings@mercata.co.za>"
   );
 }
 
@@ -75,7 +75,7 @@ async function sendDunningEmail(opts: {
   if (!key) throw new Error("RESEND_API_KEY not configured");
   const resend = new Resend(key);
   const { error } = await resend.emails.send({
-    from: accountsFrom(),
+    from: invoiceFrom(),
     to: [opts.to],
     cc: opts.cc ? [opts.cc] : undefined,
     subject: opts.subject,

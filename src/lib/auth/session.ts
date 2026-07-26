@@ -13,6 +13,8 @@ export type Operator = {
   email: string;
   display_name: string;
   totp_confirmed: number;
+  /** Provision / destructive ops. Single-operator installs are super by default. */
+  is_super: number;
 };
 
 type OperatorRow = Operator &
@@ -29,6 +31,7 @@ type SessionRow = RowDataPacket & {
   email: string;
   display_name: string;
   totp_confirmed: number;
+  is_super: number;
 };
 
 function hashToken(token: string): string {
@@ -43,7 +46,8 @@ export async function findOperatorByEmail(
   email: string,
 ): Promise<OperatorRow | null> {
   const rows = await query<OperatorRow[]>(
-    `SELECT id, email, password_hash, totp_secret, totp_confirmed, display_name
+    `SELECT id, email, password_hash, totp_secret, totp_confirmed, display_name,
+            COALESCE(is_super, 1) AS is_super
      FROM operators WHERE email = :email LIMIT 1`,
     { email: email.trim().toLowerCase() },
   );
@@ -83,7 +87,8 @@ export async function getSessionOperator(
   const tokenHash = hashToken(token);
   const rows = await query<SessionRow[]>(
     `SELECT s.id, s.operator_id, s.token_hash, s.expires_at,
-            o.email, o.display_name, o.totp_confirmed
+            o.email, o.display_name, o.totp_confirmed,
+            COALESCE(o.is_super, 1) AS is_super
      FROM sessions s
      INNER JOIN operators o ON o.id = s.operator_id
      WHERE s.token_hash = :tokenHash
@@ -107,6 +112,7 @@ export async function getSessionOperator(
     email: row.email,
     display_name: row.display_name,
     totp_confirmed: row.totp_confirmed,
+    is_super: Number(row.is_super) ? 1 : 0,
   };
 }
 
@@ -170,6 +176,7 @@ export async function loginWithPasswordAndTotp(opts: {
       email: operator.email,
       display_name: operator.display_name,
       totp_confirmed: operator.totp_confirmed,
+      is_super: Number(operator.is_super) ? 1 : 0,
     },
     token: session.token,
     expiresAt: session.expiresAt,

@@ -7,22 +7,37 @@ import {
   resendUnsentAction,
   resolveTaskAction,
 } from "@/app/(console)/dashboard-actions";
+import { TenantDetail, type TenantDetailOption } from "@/components/admin/TenantDetail";
+import { LineChart } from "@/components/charts/LineChart";
+import { GraduationActionList } from "@/components/dashboard/graduation-action-list";
+import { TenantLifecycleBoard } from "@/components/dashboard/tenant-lifecycle-board";
 import { Money, StatusPill } from "@/components/ui/status";
 import { formatIsoDate } from "@/lib/billing/cycle";
+import type { GraduationFlag } from "@/lib/billing/graduation";
+import type { LifecycleView } from "@/lib/dashboard/lifecycle";
 import type {
   DashboardMetrics,
   OperatorTaskRow,
   UnsentInvoice,
 } from "@/lib/dashboard/metrics";
+import type { FleetAnalyticsStrip } from "@/lib/analytics/queries";
 
 export function DashboardClient({
   metrics,
   unsent,
   tasks,
+  fleet,
+  tenants,
+  lifecycle,
+  graduations,
 }: {
   metrics: DashboardMetrics;
   unsent: UnsentInvoice[];
   tasks: OperatorTaskRow[];
+  fleet: FleetAnalyticsStrip | null;
+  tenants: TenantDetailOption[];
+  lifecycle: LifecycleView;
+  graduations: GraduationFlag[];
 }) {
   const [pending, startTransition] = useTransition();
 
@@ -90,38 +105,11 @@ export function DashboardClient({
         </section>
       ) : null}
 
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <Metric
-          label="MRR"
-          value={<Money cents={metrics.mrrCents} className="text-accent-strong" />}
-        />
-        <Metric
-          label="Outstanding"
-          value={
-            <Money
-              cents={metrics.outstandingCents}
-              className={
-                metrics.outstandingCents > 0
-                  ? "text-status-warn"
-                  : undefined
-              }
-            />
-          }
-        />
-        <Metric
-          label="Overdue"
-          value={
-            <span
-              className={
-                metrics.overdueCount > 0
-                  ? "font-semibold text-status-error"
-                  : undefined
-              }
-            >
-              {metrics.overdueCount}
-            </span>
-          }
-        />
+      <TenantLifecycleBoard view={lifecycle} />
+
+      <GraduationActionList flags={graduations} />
+
+      <section className="grid grid-cols-3 gap-3">
         <Metric
           label="Awaiting issue"
           value={
@@ -144,7 +132,64 @@ export function DashboardClient({
             </span>
           }
         />
+        <Metric
+          label="Unmatched credits"
+          value={
+            <Link
+              href="/payments/reconcile"
+              className={
+                metrics.unmatchedCredits > 0
+                  ? "font-semibold text-status-warn hover:text-accent-strong"
+                  : "hover:text-accent-strong"
+              }
+            >
+              {metrics.unmatchedCredits}
+            </Link>
+          }
+        />
       </section>
+
+      {fleet ? (
+        <section className="rounded-[4px] border border-border bg-surface p-4">
+          <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="text-[12px] font-semibold tracking-wide text-muted uppercase">
+              Fleet GMV this month
+            </h2>
+            <Money
+              cents={fleet.monthGmvCents}
+              className="text-[18px] font-semibold text-accent-strong tabular-nums"
+            />
+          </div>
+          <p className="mb-3 text-[11px] text-muted">
+            Mini charts = daily net sales over the last ~14 days. Month total is
+            MTD. Click a tenant for Analytics.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {fleet.tenants.map((t) => (
+              <Link
+                key={t.tenantId}
+                href={`/tenants/${t.slug}?tab=analytics&period=1d`}
+                className="rounded-[4px] border border-border px-3 py-2 hover:border-primary-light"
+              >
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-[13px] font-medium">
+                    {t.tradingName}
+                  </span>
+                  <Money
+                    cents={t.monthNetCents}
+                    className="font-mono text-[12px] tabular-nums text-muted"
+                  />
+                </div>
+                <div className="mt-1">
+                  <FleetSpark values={t.sparkline} />
+                </div>
+              </Link>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      <TenantDetail tenants={tenants} />
 
       {tasks.length > 0 ? (
         <section>
@@ -235,5 +280,29 @@ function Metric({
       </div>
       <div className="mt-1 text-[18px] font-semibold tabular-nums">{value}</div>
     </div>
+  );
+}
+
+function FleetSpark({ values }: { values: number[] }) {
+  const randValues = values.map((cents) => cents / 100);
+  return (
+    <LineChart
+      height={88}
+      emptyText="No sales history yet"
+      yFormat={(n) =>
+        n >= 1000 ? `R${(n / 1000).toFixed(1)}k` : `R${Math.round(n)}`
+      }
+      xLabels={values.map((_, i) => ({
+        label: i === 0 ? "−14d" : i === values.length - 1 ? "today" : "",
+      }))}
+      series={[
+        {
+          id: "net",
+          label: "Daily net sales",
+          values: randValues,
+          color: "var(--primary)",
+        },
+      ]}
+    />
   );
 }

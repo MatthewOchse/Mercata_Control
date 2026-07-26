@@ -119,31 +119,52 @@ export async function listTenants(): Promise<TenantListRow[]> {
   }));
 }
 
+function mapTenantRow(row: TenantRecord & RowDataPacket): TenantRecord {
+  return {
+    ...row,
+    id: Number(row.id),
+    server_id: Number(row.server_id),
+    payment_due_days: Number(row.payment_due_days ?? 7),
+    billing_day: Number(row.billing_day ?? 1),
+    digest_day: Number(row.digest_day),
+  };
+}
+
+const TENANT_SELECT = `SELECT id, server_id, slug, legal_name, trading_name, status,
+            onboarded_at, offboarded_at, notes, payment_due_days, billing_day,
+            digest_cadence, digest_day, ga4_property_id,
+            ga4_verified_at, ga4_display_name,
+            brand_primary_color, brand_logo_url, created_at
+     FROM tenants`;
+
 export async function getTenantBySlug(
   slug: string,
 ): Promise<TenantRecord | null> {
   const rows = await query<(TenantRecord & RowDataPacket)[]>(
-    `SELECT id, slug, legal_name, trading_name, status,
-            onboarded_at, offboarded_at, notes,
-            digest_cadence, digest_day, ga4_property_id,
-            brand_primary_color, brand_logo_url, created_at
-     FROM tenants WHERE slug = :slug LIMIT 1`,
+    `${TENANT_SELECT} WHERE slug = :slug LIMIT 1`,
     { slug },
   );
   const row = rows[0];
-  if (!row) return null;
-  return {
-    ...row,
-    id: Number(row.id),
-    digest_day: Number(row.digest_day),
-  };
+  return row ? mapTenantRow(row) : null;
+}
+
+export async function getTenantById(
+  id: number,
+): Promise<TenantRecord | null> {
+  const rows = await query<(TenantRecord & RowDataPacket)[]>(
+    `${TENANT_SELECT} WHERE id = :id LIMIT 1`,
+    { id },
+  );
+  const row = rows[0];
+  return row ? mapTenantRow(row) : null;
 }
 
 export async function getTenantContacts(
   tenantId: number,
 ): Promise<ContactRecord[]> {
   const rows = await query<(ContactRecord & RowDataPacket)[]>(
-    `SELECT id, name, email, phone, whatsapp_number, whatsapp_opt_in, role, is_primary
+    `SELECT id, name, email, phone, whatsapp_number, whatsapp_opt_in, role, is_primary,
+            receive_invoices, receive_digests
      FROM tenant_contacts WHERE tenant_id = :tenantId
      ORDER BY is_primary DESC, FIELD(role, 'primary', 'billing', 'technical'), name`,
     { tenantId },
@@ -152,6 +173,9 @@ export async function getTenantContacts(
     ...r,
     id: Number(r.id),
     whatsapp_opt_in: Number(r.whatsapp_opt_in),
+    is_primary: Number(r.is_primary),
+    receive_invoices: Number(r.receive_invoices),
+    receive_digests: Number(r.receive_digests),
   }));
 }
 
@@ -260,9 +284,11 @@ export function activeRecurringMrr(
 export async function getInvoices(
   tenantId: number,
 ): Promise<InvoiceSummary[]> {
-  const rows = await query<(InvoiceSummary & RowDataPacket)[]>(
+  const rows = await query<
+    (InvoiceSummary & RowDataPacket & { pdf_path: string | null })[]
+  >(
     `SELECT id, invoice_number, status, issue_date, due_date,
-            period_start, period_end, total_cents
+            period_start, period_end, total_cents, pdf_path
      FROM invoices WHERE tenant_id = :tenantId
      ORDER BY COALESCE(issue_date, created_at) DESC, id DESC`,
     { tenantId },
@@ -276,6 +302,7 @@ export async function getInvoices(
     period_start: String(r.period_start).slice(0, 10),
     period_end: String(r.period_end).slice(0, 10),
     total_cents: Number(r.total_cents),
+    has_pdf: Boolean(r.pdf_path),
   }));
 }
 

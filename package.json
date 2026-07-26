@@ -10,6 +10,9 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "seed:operator": "tsx scripts/seed-operator.ts",
     "seed:tenants": "tsx scripts/seed-tenants.ts",
+    "register:server": "tsx scripts/register-server.ts",
+    "smoke:server": "tsx scripts/smoke-server.ts",
+    "worker:provision": "tsx workers/provision-worker.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

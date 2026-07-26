@@ -75,11 +75,22 @@ async function main() {
       const monthly = Number(planRows[0]?.monthly_cents);
       if (!monthly) throw new Error(`Plan missing: ${seed.planCode}`);
 
+      const [serverRows] = await conn.execute<(RowDataPacket & { id: number })[]>(
+        `SELECT id FROM servers WHERE name = 'caesar' LIMIT 1`,
+      );
+      const serverId = Number(serverRows[0]?.id);
+      if (!serverId) {
+        throw new Error(
+          "Server caesar is not registered — apply migration 022 first",
+        );
+      }
+
       const [tenantResult] = await conn.execute<ResultSetHeader>(
         `INSERT INTO tenants
-           (slug, legal_name, trading_name, status, onboarded_at, notes, brand_primary_color)
-         VALUES (?, ?, ?, 'active', UTC_TIMESTAMP(3), ?, ?)`,
+           (server_id, slug, legal_name, trading_name, status, onboarded_at, notes, brand_primary_color)
+         VALUES (?, ?, ?, ?, 'active', UTC_TIMESTAMP(3), ?, ?)`,
         [
+          serverId,
           seed.slug,
           seed.legalName,
           seed.tradingName,

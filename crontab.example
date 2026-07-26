@@ -1,10 +1,15 @@
 # Example cron (on caesar).
 #
 # */3 * * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://admin.mercata.co.za/api/cron/health-poll
+# 0 1 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://admin.mercata.co.za/api/cron/analytics-etl
+# 0 5 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://admin.mercata.co.za/api/cron/digests
 # 0 6 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://admin.mercata.co.za/api/cron/alert-digest
 # 0 6 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://admin.mercata.co.za/api/cron/dunning
-# 0 5 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://admin.mercata.co.za/api/cron/digests
+# 30 2 1 * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://admin.mercata.co.za/api/cron/monthly-sales
 #
-# 08:00 SAST = 06:00 UTC (SAST is UTC+2 year-round).
-# alert-digest and dunning both run at 08:00 SAST.
-# Customer digests run at 07:00 SAST (05:00 UTC); weekly tenants send on digest_day (default Mon).
+# 03:00 SAST = 01:00 UTC — analytics ETL (trailing GA4 days + yesterday internal).
+# 07:00 SAST = 05:00 UTC — customer digests (weekly on digest_day; monthly on the 1st).
+# 08:00 SAST = 06:00 UTC — alert-digest + dunning.
+# 04:30 SAST = 02:30 UTC on the 1st — resolve last month's gross sales for every
+#   tenant and check for Starter tenants ready to graduate. Must run before the
+#   billing run so commission lines have a figure to use.

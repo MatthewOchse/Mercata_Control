@@ -16,12 +16,18 @@ export async function listActiveProbeTargets(): Promise<TenantProbeTarget[]> {
       primary_domain: string;
       health_path: string;
       fleet_secret: string;
+      plan_code: string | null;
     })[]
   >(
-    `SELECT t.id, t.slug, i.primary_domain, i.health_path, i.fleet_secret
+    `SELECT t.id, t.slug, i.primary_domain, i.health_path, i.fleet_secret,
+            (
+              SELECT s.plan_code FROM subscriptions s
+              WHERE s.tenant_id = t.id AND s.status = 'active'
+              ORDER BY s.id DESC LIMIT 1
+            ) AS plan_code
      FROM tenants t
      INNER JOIN tenant_infra i ON i.tenant_id = t.id
-     WHERE t.status IN ('active', 'suspended')
+     WHERE t.status = 'active'
      ORDER BY t.slug`,
   );
   return rows.map((r) => ({
@@ -30,6 +36,7 @@ export async function listActiveProbeTargets(): Promise<TenantProbeTarget[]> {
     primaryDomain: r.primary_domain,
     healthPath: r.health_path || "/api/_fleet/health",
     fleetSecretCipher: r.fleet_secret,
+    planCode: r.plan_code ? String(r.plan_code) : null,
   }));
 }
 

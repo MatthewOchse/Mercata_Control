@@ -46,30 +46,20 @@ export async function resolveTenantBrand(opts: {
     try {
       const host = normaliseDomain(opts.primaryDomain);
       const secret = decryptSecret(opts.fleetSecretCipher);
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 8000);
-      try {
-        const res = await fetch(`https://${host}/api/_fleet/brand`, {
-          method: "GET",
-          signal: controller.signal,
-          headers: {
-            authorization: `Bearer ${secret}`,
-            accept: "application/json",
-            "user-agent": "MercataControl/digest-brand",
-          },
-          cache: "no-store",
-        });
-        if (res.ok) {
-          const json = (await res.json()) as LiveBrand;
-          const livePrimary = normaliseHex(
-            json.primary_color ?? json.primaryColor,
-          );
-          if (livePrimary) primary = livePrimary;
-          const liveLogo = (json.logo_url ?? json.logoUrl)?.trim();
-          if (liveLogo) logoUrl = liveLogo;
-        }
-      } finally {
-        clearTimeout(timer);
+      const { fetchFleetAuthorized } = await import("@/lib/health/fleet-fetch");
+      const res = await fetchFleetAuthorized(
+        `https://${host}/api/_fleet/brand`,
+        secret,
+        { timeoutMs: 8000, userAgent: "MercataControl/digest-brand" },
+      );
+      if (res.ok) {
+        const json = (await res.json()) as LiveBrand;
+        const livePrimary = normaliseHex(
+          json.primary_color ?? json.primaryColor,
+        );
+        if (livePrimary) primary = livePrimary;
+        const liveLogo = (json.logo_url ?? json.logoUrl)?.trim();
+        if (liveLogo) logoUrl = liveLogo;
       }
     } catch {
       // Live brand is best-effort; stored / fallback still apply.

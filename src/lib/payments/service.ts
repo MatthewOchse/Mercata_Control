@@ -118,6 +118,33 @@ export async function recordPayment(
     }
 
     return { paymentId, invoicePaid, outstandingCents };
+  }).then(async (result) => {
+    await maybeAutoUnsuspend(input.tenantId, input.capturedBy);
+    return result;
+  });
+}
+
+async function maybeAutoUnsuspend(
+  tenantId: number,
+  actor: string,
+): Promise<void> {
+  const { outstandingBalanceCents } = await import("@/lib/tenants/queries");
+  const outstanding = await outstandingBalanceCents(tenantId);
+  if (outstanding > 0) return;
+
+  const rows = await query<
+    (RowDataPacket & { slug: string; status: string })[]
+  >(
+    `SELECT slug, status FROM tenants WHERE id = :id LIMIT 1`,
+    { id: tenantId },
+  );
+  const tenant = rows[0];
+  if (!tenant || tenant.status !== "suspended") return;
+
+  const { unsuspendTenant } = await import("@/lib/tenants/service");
+  await unsuspendTenant(tenant.slug, actor, {
+    reason: "Auto-unsuspend: outstanding balance cleared by payment",
+    notify: true,
   });
 }
 
@@ -184,7 +211,17 @@ export async function allocatePayment(
       outstandingCents = 0;
     }
 
-    return { invoicePaid, outstandingCents };
+    return {
+      invoicePaid,
+      outstandingCents,
+      tenantId: Number(pay.tenant_id),
+    };
+  }).then(async (result) => {
+    await maybeAutoUnsuspend(result.tenantId, actor);
+    return {
+      invoicePaid: result.invoicePaid,
+      outstandingCents: result.outstandingCents,
+    };
   });
 }
 

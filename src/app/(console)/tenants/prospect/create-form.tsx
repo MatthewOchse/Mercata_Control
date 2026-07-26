@@ -47,6 +47,20 @@ export function CreateTenantForm({ plans }: { plans: PlanOption[] }) {
           <Field label="Email" name="primary_email" type="email" required />
           <Field label="Phone" name="primary_phone" />
         </div>
+        <div className="mt-3 flex flex-wrap gap-4 text-[12px]">
+          <label className="inline-flex items-center gap-1.5">
+            <input type="checkbox" name="primary_receive_invoices" />
+            Receive invoices
+          </label>
+          <label className="inline-flex items-center gap-1.5">
+            <input
+              type="checkbox"
+              name="primary_receive_digests"
+              defaultChecked
+            />
+            Receive analytics digests
+          </label>
+        </div>
       </section>
 
       <section className="rounded-[4px] border border-border bg-surface p-4">
@@ -68,8 +82,32 @@ export function CreateTenantForm({ plans }: { plans: PlanOption[] }) {
             <Field label="Email" name="billing_email" type="email" required />
             <Field label="Phone" name="billing_phone" />
           </div>
-        ) : null}
+        ) : (
+          <p className="mb-2 text-[12px] text-muted">
+            Same email as primary — set routing below.
+          </p>
+        )}
+        <div className="mt-3 flex flex-wrap gap-4 text-[12px]">
+          <label className="inline-flex items-center gap-1.5">
+            <input
+              type="checkbox"
+              name="billing_receive_invoices"
+              defaultChecked
+            />
+            Receive invoices
+          </label>
+          <label className="inline-flex items-center gap-1.5">
+            <input
+              type="checkbox"
+              name="billing_receive_digests"
+              defaultChecked
+            />
+            Receive analytics digests
+          </label>
+        </div>
       </section>
+
+      <ExtraRecipients />
 
       <section className="rounded-[4px] border border-border bg-surface p-4">
         <h2 className="mb-3 text-[13px] font-semibold">Plan &amp; setup</h2>
@@ -98,10 +136,24 @@ export function CreateTenantForm({ plans }: { plans: PlanOption[] }) {
             hint="Defaults to R3,000. Set 0 to skip."
             money
           />
+          <Field
+            label="Monthly price (optional)"
+            name="monthly_price"
+            hint="Leave blank for catalog plan price. Use for discounts."
+            money
+          />
+          <Field
+            label="Billing day"
+            name="billing_day"
+            defaultValue="1"
+            hint="Day of month they are billed (1–28). Default 1st."
+            type="number"
+          />
         </div>
         <p className="mt-3 text-[12px] text-muted">
-          Creates as <strong>prospect</strong>. Subscription is prepared but
-          billing starts only when you Activate.
+          Creates as <strong>prospect</strong>. On Activate, a draft invoice is
+          created for the current calendar month. Billing day and package can
+          be changed later on the Billing tab.
         </p>
       </section>
 
@@ -124,6 +176,62 @@ export function CreateTenantForm({ plans }: { plans: PlanOption[] }) {
         </Link>
       </div>
     </form>
+  );
+}
+
+function ExtraRecipients() {
+  const [rows, setRows] = useState(0);
+
+  return (
+    <section className="rounded-[4px] border border-border bg-surface p-4">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h2 className="text-[13px] font-semibold">Extra email recipients</h2>
+        <button
+          type="button"
+          onClick={() => setRows((n) => n + 1)}
+          className="text-[12px] font-semibold text-accent-strong hover:underline"
+        >
+          + Add email
+        </button>
+      </div>
+      <p className="mb-3 text-[12px] text-muted">
+        Optional extra addresses for invoices and/or analytics digests.
+      </p>
+      {rows === 0 ? (
+        <p className="text-[12px] text-muted">None added.</p>
+      ) : (
+        <div className="space-y-3">
+          {Array.from({ length: rows }, (_, i) => (
+            <div
+              key={i}
+              className="grid grid-cols-1 gap-2 rounded-[4px] border border-border p-3 sm:grid-cols-2"
+            >
+              <Field label="Name" name="extra_name" />
+              <Field label="Email" name="extra_email" type="email" />
+              <div className="flex flex-wrap gap-4 text-[12px] sm:col-span-2">
+                <label className="inline-flex items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    name="extra_receive_invoices"
+                    value={String(i)}
+                  />
+                  Invoices
+                </label>
+                <label className="inline-flex items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    name="extra_receive_digests"
+                    value={String(i)}
+                    defaultChecked
+                  />
+                  Analytics digests
+                </label>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

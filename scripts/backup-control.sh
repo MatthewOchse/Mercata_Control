@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Nightly backup of mercata_control DB + invoice PDFs.
+# Nightly backup of mercata_control DB + invoice PDFs + business file vault.
 # Destination: /mnt/vault/backups/control/  Retention: 30 days.
 #
 # Cron (on caesar, as matthew):
@@ -17,8 +17,8 @@ if ! mountpoint -q /mnt/vault; then
   exit 1
 fi
 
-mkdir -p "$BACKUP_ROOT/mysql" "$BACKUP_ROOT/invoices"
-chmod 700 "$BACKUP_ROOT" "$BACKUP_ROOT/mysql" "$BACKUP_ROOT/invoices"
+mkdir -p "$BACKUP_ROOT/mysql" "$BACKUP_ROOT/invoices" "$BACKUP_ROOT/business-files"
+chmod 700 "$BACKUP_ROOT" "$BACKUP_ROOT/mysql" "$BACKUP_ROOT/invoices" "$BACKUP_ROOT/business-files"
 
 cd "$CONTROL_DIR"
 
@@ -60,7 +60,18 @@ else
   echo "OK   inv  $(basename "$inv_out") (empty tree)"
 fi
 
+biz_out="$BACKUP_ROOT/business-files/business_files_${STAMP}.tar.gz"
+if docker compose exec -T mercata_admin \
+  tar czf - -C /app/storage business-files 2>/dev/null \
+  | cat > "$biz_out" && [[ -s "$biz_out" ]]; then
+  echo "OK   biz  $(basename "$biz_out") ($(du -h "$biz_out" | cut -f1))"
+else
+  tar czf "$biz_out" --files-from /dev/null
+  echo "OK   biz  $(basename "$biz_out") (empty tree)"
+fi
+
 find "$BACKUP_ROOT/mysql" -name 'mercata_control_*.sql.gz' -mtime +"$RETENTION_DAYS" -delete
 find "$BACKUP_ROOT/invoices" -name 'invoices_*.tar.gz' -mtime +"$RETENTION_DAYS" -delete
+find "$BACKUP_ROOT/business-files" -name 'business_files_*.tar.gz' -mtime +"$RETENTION_DAYS" -delete
 
 echo "Backup finished: $STAMP"

@@ -8,6 +8,7 @@ export type DashboardMetrics = {
   overdueCount: number;
   draftsAwaitingIssue: number;
   unsentCount: number;
+  unmatchedCredits: number;
 };
 
 export type UnsentInvoice = {
@@ -83,12 +84,25 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
        AND sent_at IS NULL`,
   );
 
+  let unmatchedCredits = 0;
+  try {
+    const unmatched = await query<(RowDataPacket & { c: number })[]>(
+      `SELECT COUNT(*) AS c FROM bank_transactions
+       WHERE status = 'unmatched' AND amount_cents > 0`,
+    );
+    unmatchedCredits = Number(unmatched[0]?.c ?? 0);
+  } catch {
+    // Table may not exist before migration 011.
+    unmatchedCredits = 0;
+  }
+
   return {
     mrrCents: Number(mrr[0]?.total ?? 0),
     outstandingCents: Math.max(0, Number(outstanding[0]?.total ?? 0)),
     overdueCount: Number(overdue[0]?.c ?? 0),
     draftsAwaitingIssue: Number(drafts[0]?.c ?? 0),
     unsentCount: Number(unsent[0]?.c ?? 0),
+    unmatchedCredits,
   };
 }
 

@@ -13,6 +13,8 @@ export function middleware(request: NextRequest) {
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon") ||
     pathname.startsWith("/brand") ||
+    pathname === "/apple-touch-icon.png" ||
+    pathname === "/icon.png" ||
     pathname === "/api/health" ||
     pathname.startsWith("/api/cron/") ||
     pathname.startsWith("/api/digest/unsubscribe")
@@ -45,17 +47,17 @@ export function middleware(request: NextRequest) {
   const isPublic = PUBLIC_PATHS.has(pathname);
   const session = request.cookies.get("mercata_session")?.value;
 
+  // Unauthenticated → login. Do NOT bounce /login → / just because a cookie
+  // exists: after a DB wipe / expired session that creates an infinite loop
+  // with requireOperator() redirecting back to /login.
   if (!session && !isPublic) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
-    url.searchParams.set("next", pathname);
-    return NextResponse.redirect(url);
-  }
-
-  if (session && pathname === "/login") {
-    const url = request.nextUrl.clone();
-    url.pathname = "/";
-    url.search = "";
+    if (pathname !== "/" && pathname !== "/login") {
+      url.searchParams.set("next", pathname);
+    } else {
+      url.search = "";
+    }
     return NextResponse.redirect(url);
   }
 
@@ -63,5 +65,7 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image).*)"],
+  matcher: [
+    "/((?!_next/static|_next/image|icon(?:\\.png)?|apple-icon(?:\\.png)?|favicon.ico).*)",
+  ],
 };

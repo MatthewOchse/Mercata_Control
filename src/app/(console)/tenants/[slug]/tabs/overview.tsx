@@ -11,6 +11,7 @@ import type {
   SubscriptionRecord,
   TenantRecord,
 } from "@/lib/tenants/types";
+import { OverviewContactsClient } from "./overview-contacts-client";
 
 export function OverviewTab({
   tenant,
@@ -64,38 +65,7 @@ export function OverviewTab({
         </dl>
       </section>
 
-      <section className="rounded-[4px] border border-border bg-surface p-4">
-        <h3 className="mb-3 text-[12px] font-semibold tracking-wide text-muted uppercase">
-          Contacts
-        </h3>
-        {contacts.length === 0 ? (
-          <p className="text-[13px] text-muted">No contacts</p>
-        ) : (
-          <ul className="space-y-2">
-            {contacts.map((c) => (
-              <li key={c.id} className="text-[13px]">
-                <div className="font-medium">
-                  {c.name}{" "}
-                  <span className="text-[11px] font-normal text-muted">
-                    ({c.role}
-                    {c.is_primary ? ", primary" : ""})
-                  </span>
-                </div>
-                <div className="text-muted">{c.email}</div>
-                {c.phone ? (
-                  <div className="font-mono text-[12px] text-muted">{c.phone}</div>
-                ) : null}
-                {c.whatsapp_number ? (
-                  <div className="font-mono text-[12px] text-muted">
-                    WA {c.whatsapp_number}
-                    {c.whatsapp_opt_in ? " · opted in" : " · no opt-in"}
-                  </div>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      <OverviewContactsClient slug={tenant.slug} contacts={contacts} />
 
       <section className="rounded-[4px] border border-border bg-surface p-4 lg:col-span-2">
         <h3 className="mb-3 text-[12px] font-semibold tracking-wide text-muted uppercase">

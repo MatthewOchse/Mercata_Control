@@ -18,6 +18,7 @@ type DigestTenantRow = RowDataPacket & {
   digest_cadence: DigestCadence;
   digest_day: number;
   ga4_property_id: string | null;
+  ga4_verified_at: string | null;
   brand_primary_color: string | null;
   brand_logo_url: string | null;
   primary_domain: string | null;
@@ -46,6 +47,9 @@ function toInput(row: DigestTenantRow): DigestTenantInput {
     digest_cadence: row.digest_cadence,
     digest_day: Number(row.digest_day),
     ga4_property_id: row.ga4_property_id,
+    ga4_verified_at: row.ga4_verified_at
+      ? String(row.ga4_verified_at)
+      : null,
     brand_primary_color: row.brand_primary_color,
     brand_logo_url: row.brand_logo_url,
     primary_domain: row.primary_domain,
@@ -73,7 +77,7 @@ async function alreadySent(
 
 async function logSend(opts: {
   tenantId: number;
-  cadence: "daily" | "weekly";
+  cadence: "daily" | "weekly" | "monthly";
   periodStart: string;
   periodEnd: string;
   recipient: string;
@@ -99,20 +103,26 @@ async function logSend(opts: {
   );
 }
 
-/** Recipients: primary + billing contacts, deduped by email. */
+/** Recipients flagged for analytics digests (supports multiple emails). */
 export async function digestRecipients(
   tenantId: number,
 ): Promise<string[]> {
-  const rows = await query<ContactRow[]>(
+  const flagged = await query<ContactRow[]>(
     `SELECT email, role, is_primary
      FROM tenant_contacts
-     WHERE tenant_id = :tenantId
-       AND (
-         is_primary = 1
-         OR role IN ('primary', 'billing')
-       )`,
+     WHERE tenant_id = :tenantId AND receive_digests = 1`,
     { tenantId },
   );
+  const rows =
+    flagged.length > 0
+      ? flagged
+      : await query<ContactRow[]>(
+          `SELECT email, role, is_primary
+           FROM tenant_contacts
+           WHERE tenant_id = :tenantId
+             AND (is_primary = 1 OR role IN ('primary', 'billing'))`,
+          { tenantId },
+        );
   const seen = new Set<string>();
   const out: string[] = [];
   for (const r of rows) {
@@ -127,13 +137,13 @@ export async function digestRecipients(
 export async function listDigestTenants(): Promise<DigestTenantInput[]> {
   const rows = await query<DigestTenantRow[]>(
     `SELECT t.id, t.slug, t.trading_name,
-            t.digest_cadence, t.digest_day, t.ga4_property_id,
+            t.digest_cadence, t.digest_day, t.ga4_property_id, t.ga4_verified_at,
             t.brand_primary_color, t.brand_logo_url,
             i.primary_domain, i.fleet_secret
      FROM tenants t
      LEFT JOIN tenant_infra i ON i.tenant_id = t.id
      WHERE t.status = 'active'
-       AND t.digest_cadence IN ('daily', 'weekly')`,
+       AND t.digest_cadence IN ('daily', 'weekly', 'monthly')`,
   );
   return rows.map(toInput);
 }
@@ -143,7 +153,7 @@ export async function getDigestTenantBySlug(
 ): Promise<DigestTenantInput | null> {
   const rows = await query<DigestTenantRow[]>(
     `SELECT t.id, t.slug, t.trading_name,
-            t.digest_cadence, t.digest_day, t.ga4_property_id,
+            t.digest_cadence, t.digest_day, t.ga4_property_id, t.ga4_verified_at,
             t.brand_primary_color, t.brand_logo_url,
             i.primary_domain, i.fleet_secret
      FROM tenants t
@@ -165,6 +175,13 @@ export async function updateDigestSettings(opts: {
   if (opts.digestDay < 1 || opts.digestDay > 7) {
     throw new Error("digest_day must be 1–7 (Mon–Sun)");
   }
+  const existing = await query<(RowDataPacket & { ga4_property_id: string | null })[]>(
+    `SELECT ga4_property_id FROM tenants WHERE slug = :slug LIMIT 1`,
+    { slug: opts.slug },
+  );
+  const prev = existing[0]?.ga4_property_id ?? null;
+  const changed = (prev ?? "") !== (opts.ga4PropertyId ?? "");
+
   await query(
     `UPDATE tenants SET
        digest_cadence = :cadence,
@@ -172,6 +189,11 @@ export async function updateDigestSettings(opts: {
        ga4_property_id = :ga4,
        brand_primary_color = :primary,
        brand_logo_url = :logo
+       ${
+         changed
+           ? ", ga4_verified_at = NULL, ga4_display_name = NULL, ga4_consecutive_failures = 0"
+           : ""
+       }
      WHERE slug = :slug`,
     {
       slug: opts.slug,
@@ -182,6 +204,36 @@ export async function updateDigestSettings(opts: {
       logo: opts.brandLogoUrl,
     },
   );
+}
+
+/** Send one test digest to the operator (does not log as customer send). */
+export async function sendTestDigest(opts: {
+  slug: string;
+  to: string;
+  sendDate?: string;
+}): Promise<{ subject: string }> {
+  const tenant = await getDigestTenantBySlug(opts.slug);
+  if (!tenant) throw new Error("Tenant not found");
+  const cadence =
+    tenant.digest_cadence === "off"
+      ? "weekly"
+      : (tenant.digest_cadence as "daily" | "weekly" | "monthly");
+  const payload = await buildDigestPayload(tenant, opts.to, {
+    sendDate: opts.sendDate,
+    cadenceOverride: cadence,
+  });
+  const channel = createDigestEmailChannel();
+  if (!channel) throw new Error("RESEND_API_KEY not configured");
+  const subject = `[TEST] ${renderDigestSubject(payload)}`;
+  await channel.send({
+    to: opts.to,
+    subject,
+    text: renderDigestText(payload),
+    html: renderDigestHtml(payload),
+    tenantSlug: tenant.slug,
+    kind: "digest",
+  });
+  return { subject };
 }
 
 /**

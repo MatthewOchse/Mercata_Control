@@ -2,6 +2,7 @@ import type { RowDataPacket } from "mysql2/promise";
 import { query } from "@/lib/db/pool";
 import {
   SIGNAL_LABEL,
+  planExpectsOrders,
   type AlertSignal,
   type FleetHealthPayload,
 } from "@/lib/health/types";
@@ -15,6 +16,8 @@ export type HealthTile = {
   latencyMs: number | null;
   certDays: number | null;
   lastOrderAt: string | null;
+  /** False for Service Hosting — no commerce orders expected. */
+  expectsOrders: boolean;
   checkedAt: string | null;
   sparkline: number[];
   openSignals: string[];
@@ -65,11 +68,19 @@ export async function getHealthDashboard(): Promise<{
       id: number;
       slug: string;
       trading_name: string;
+      status: string;
+      plan_code: string | null;
     })[]
   >(
-    `SELECT id, slug, trading_name FROM tenants
-     WHERE status IN ('active', 'suspended')
-     ORDER BY trading_name`,
+    `SELECT t.id, t.slug, t.trading_name, t.status,
+            (
+              SELECT s.plan_code FROM subscriptions s
+              WHERE s.tenant_id = t.id AND s.status = 'active'
+              ORDER BY s.id DESC LIMIT 1
+            ) AS plan_code
+     FROM tenants t
+     WHERE t.status IN ('active', 'suspended')
+     ORDER BY t.trading_name`,
   );
 
   const openAlerts = await query<
@@ -86,16 +97,22 @@ export async function getHealthDashboard(): Promise<{
     "SELECT a.tenant_id, a.`signal`, a.severity, a.opened_at, a.details, t.slug, t.trading_name FROM alert_states a INNER JOIN tenants t ON t.id = a.tenant_id WHERE a.status = 'open' ORDER BY FIELD(a.severity, 'critical', 'warning'), a.opened_at ASC",
   );
 
-  const incidents: IncidentRow[] = openAlerts.map((a) => ({
-    tenantId: Number(a.tenant_id),
-    slug: a.slug,
-    tradingName: a.trading_name,
-    signal: a.signal as AlertSignal,
-    label: SIGNAL_LABEL[a.signal as AlertSignal] ?? a.signal,
-    severity: a.severity,
-    openedAt: a.opened_at ? String(a.opened_at) : null,
-    details: a.details,
-  }));
+  const incidents: IncidentRow[] = openAlerts
+    .filter((a) => {
+      // Hide alerts for suspended tenants even if stale open rows remain.
+      const t = tenants.find((x) => Number(x.id) === Number(a.tenant_id));
+      return t?.status !== "suspended";
+    })
+    .map((a) => ({
+      tenantId: Number(a.tenant_id),
+      slug: a.slug,
+      tradingName: a.trading_name,
+      signal: a.signal as AlertSignal,
+      label: SIGNAL_LABEL[a.signal as AlertSignal] ?? a.signal,
+      severity: a.severity,
+      openedAt: a.opened_at ? String(a.opened_at) : null,
+      details: a.details,
+    }));
 
   const openByTenant = new Map<number, typeof openAlerts>();
   for (const a of openAlerts) {
@@ -143,12 +160,17 @@ export async function getHealthDashboard(): Promise<{
     const check = latest[0];
     const payload = parsePayload(check?.payload);
     const opens = openByTenant.get(tenantId) ?? [];
-    const { tone, label } = tileTone(
-      opens.some((o) => o.severity === "critical"),
-      opens.some((o) => o.severity === "warning"),
-      Boolean(check),
-      check ? Boolean(check.ok) : null,
-    );
+
+    // Suspended is intentional — never paint as site_down red.
+    const { tone, label } =
+      t.status === "suspended"
+        ? { tone: "idle" as const, label: "Suspended" }
+        : tileTone(
+            opens.some((o) => o.severity === "critical"),
+            opens.some((o) => o.severity === "warning"),
+            Boolean(check),
+            check ? Boolean(check.ok) : null,
+          );
 
     tiles.push({
       tenantId,
@@ -165,12 +187,18 @@ export async function getHealthDashboard(): Promise<{
           ? null
           : Number(check.cert_days_remaining),
       lastOrderAt: payload?.storefront?.last_order_at ?? null,
+      expectsOrders: planExpectsOrders(
+        t.plan_code ? String(t.plan_code) : null,
+      ),
       checkedAt: check?.checked_at ? String(check.checked_at) : null,
       sparkline: sparkRows
         .map((r) => Number(r.latency_ms))
         .filter((n) => Number.isFinite(n))
         .reverse(),
-      openSignals: opens.map((o) => o.signal),
+      openSignals:
+        t.status === "suspended"
+          ? []
+          : opens.map((o) => o.signal),
       silencedUntil: silence[0]?.ends_at
         ? String(silence[0].ends_at)
         : null,

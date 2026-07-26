@@ -4,7 +4,12 @@ export type TenantStatus =
   | "suspended"
   | "offboarded";
 
-export type PlanCode = "online" | "retail" | "retail_pro";
+export type PlanCode =
+  | "starter"
+  | "online"
+  | "retail"
+  | "retail_pro"
+  | "service_hosting";
 
 export type ContactRole = "billing" | "technical" | "primary";
 
@@ -24,10 +29,12 @@ export type TenantListRow = {
   health_open_warning: boolean;
 };
 
-export type DigestCadence = "daily" | "weekly" | "off";
+export type DigestCadence = "daily" | "weekly" | "monthly" | "off";
 
 export type TenantRecord = {
   id: number;
+  /** FK to servers.id — required; every tenant is assigned to a box. */
+  server_id: number;
   slug: string;
   legal_name: string;
   trading_name: string;
@@ -35,9 +42,13 @@ export type TenantRecord = {
   onboarded_at: Date | string | null;
   offboarded_at: Date | string | null;
   notes: string | null;
+  payment_due_days: number;
+  billing_day: number;
   digest_cadence: DigestCadence;
   digest_day: number;
   ga4_property_id: string | null;
+  ga4_verified_at: Date | string | null;
+  ga4_display_name: string | null;
   brand_primary_color: string | null;
   brand_logo_url: string | null;
   created_at: Date | string;
@@ -52,6 +63,8 @@ export type ContactRecord = {
   whatsapp_opt_in: number;
   role: ContactRole;
   is_primary: number;
+  receive_invoices: number;
+  receive_digests: number;
 };
 
 export type InfraRecord = {
@@ -93,6 +106,7 @@ export type InvoiceSummary = {
   period_start: string;
   period_end: string;
   total_cents: number;
+  has_pdf: boolean;
 };
 
 export type PaymentSummary = {

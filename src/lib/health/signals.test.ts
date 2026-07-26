@@ -6,6 +6,7 @@ function poll(partial: Partial<PollResult>): PollResult {
   return {
     tenantId: 1,
     slug: "crafties",
+    planCode: "retail",
     ok: true,
     latencyMs: 100,
     certDaysRemaining: 60,
@@ -140,5 +141,39 @@ describe("health signal evaluation", () => {
       evaluateSignals(silent, recent).find((s) => s.signal === "sales_silence")
         ?.active,
     ).toBe(true);
+  });
+
+  it("skips sales_silence for service_hosting even with stale last_order_at", () => {
+    const eightDaysAgo = new Date(
+      Date.now() - 8 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const current = poll({
+      planCode: "service_hosting",
+      payload: {
+        status: "ok",
+        db: { reachable: true, pending_migrations: 0 },
+        storefront: { last_order_at: eightDaysAgo },
+      },
+    });
+    const recent = [
+      {
+        ok: true,
+        latency_ms: 100,
+        payload: {
+          storefront: {
+            last_order_at: new Date(
+              Date.now() - 4 * 24 * 60 * 60 * 1000,
+            ).toISOString(),
+          },
+        },
+        checked_at: new Date(
+          Date.now() - 3 * 24 * 60 * 60 * 1000,
+        ).toISOString(),
+      },
+    ];
+    expect(
+      evaluateSignals(current, recent).find((s) => s.signal === "sales_silence")
+        ?.active,
+    ).toBe(false);
   });
 });

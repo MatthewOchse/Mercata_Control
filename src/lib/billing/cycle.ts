@@ -24,6 +24,12 @@ export function sastToday(): string {
   return `${year}-${pad2(month)}-${pad2(day)}`;
 }
 
+/** First calendar day of the current SAST month (YYYY-MM-DD). */
+export function firstDayOfThisMonth(): string {
+  const { year, month } = sastParts();
+  return `${year}-${pad2(month)}-01`;
+}
+
 /** Last calendar day of the current SAST month (YYYY-MM-DD). */
 export function lastDayOfThisMonth(): string {
   const { year, month } = sastParts();
@@ -38,6 +44,43 @@ export function firstDayOfNextMonth(): string {
   const nextMonth = month === 12 ? 1 : month + 1;
   const nextYear = month === 12 ? year + 1 : year;
   return `${nextYear}-${pad2(nextMonth)}-01`;
+}
+
+/**
+ * Due date from a billing day-of-month (1–28).
+ * Uses the invoice period's month; if that day is already before issueDate,
+ * rolls forward to the next month.
+ */
+export function dueDateForBillingDay(
+  issueDate: string,
+  periodStart: string,
+  billingDay: number,
+): string {
+  const day = Math.min(28, Math.max(1, Math.trunc(billingDay)));
+  const [iy, im] = issueDate.slice(0, 10).split("-").map(Number);
+  const [py, pm] = periodStart.slice(0, 10).split("-").map(Number);
+  if (!iy || !im || !py || !pm) {
+    throw new Error(`Invalid dates for dueDateForBillingDay`);
+  }
+
+  function clampDay(year: number, month: number, d: number): string {
+    const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    return `${year}-${pad2(month)}-${pad2(Math.min(d, last))}`;
+  }
+
+  let due = clampDay(py, pm, day);
+  if (due < issueDate.slice(0, 10)) {
+    const nextMonth = pm === 12 ? 1 : pm + 1;
+    const nextYear = pm === 12 ? py + 1 : py;
+    due = clampDay(nextYear, nextMonth, day);
+  }
+  // Still before issue (edge): use issue month's next occurrence from issue date
+  if (due < issueDate.slice(0, 10)) {
+    const nextMonth = im === 12 ? 1 : im + 1;
+    const nextYear = im === 12 ? iy + 1 : iy;
+    due = clampDay(nextYear, nextMonth, day);
+  }
+  return due;
 }
 
 export function formatIsoDate(iso: string | null | undefined): string {

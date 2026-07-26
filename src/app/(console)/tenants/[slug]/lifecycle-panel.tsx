@@ -38,6 +38,10 @@ export function LifecyclePanel({
     changePlanAction,
     empty,
   );
+  const [suspendState, suspendAction, suspendPending] = useActionState(
+    suspendTenantAction,
+    empty,
+  );
   const [offboardState, offboardAction, offboardPending] = useActionState(
     offboardTenantAction,
     empty,
@@ -138,35 +142,51 @@ export function LifecyclePanel({
             <strong className="font-mono text-foreground">{endsOn}</strong>. New
             plan takes effect{" "}
             <strong className="font-mono text-foreground">{effectiveOn}</strong>.
-            Existing subscription price is never mutated.
+            The ending subscription keeps its price; set a custom monthly price
+            below if the new plan should not use catalog pricing.
           </p>
-          <select
-            name="plan_code"
-            required
-            defaultValue={
-              plans.find((p) => p.code !== currentPlanCode)?.code ??
-              plans[0]?.code
-            }
-            className="h-8 rounded-[4px] border border-border px-2 text-[13px]"
-          >
-            {plans.map((p) => (
-              <option
-                key={p.code}
-                value={p.code}
-                disabled={p.code === currentPlanCode}
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] text-muted uppercase">New plan</span>
+              <select
+                name="plan_code"
+                required
+                defaultValue={
+                  plans.find((p) => p.code !== currentPlanCode)?.code ??
+                  plans[0]?.code
+                }
+                className="h-8 rounded-[4px] border border-border px-2 text-[13px]"
               >
-                {p.name} — {formatZAR(p.monthly_cents)}/mo
-                {p.code === currentPlanCode ? " (current)" : ""}
-              </option>
-            ))}
-          </select>
-          <button
-            type="submit"
-            disabled={planPending}
-            className="ml-2 h-8 rounded-[4px] bg-accent-strong px-3 text-[12px] font-semibold text-white disabled:opacity-60"
-          >
-            Confirm plan change
-          </button>
+                {plans.map((p) => (
+                  <option
+                    key={p.code}
+                    value={p.code}
+                    disabled={p.code === currentPlanCode}
+                  >
+                    {p.name} — {formatZAR(p.monthly_cents)}/mo
+                    {p.code === currentPlanCode ? " (current)" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] text-muted uppercase">
+                Custom price (optional)
+              </span>
+              <input
+                name="monthly_price"
+                placeholder="Leave blank for catalog"
+                className="h-8 w-44 rounded-[4px] border border-border px-2 font-mono text-[13px] tabular-nums"
+              />
+            </label>
+            <button
+              type="submit"
+              disabled={planPending}
+              className="h-8 rounded-[4px] bg-accent-strong px-3 text-[12px] font-semibold text-white disabled:opacity-60"
+            >
+              Confirm plan change
+            </button>
+          </div>
           {planState.error ? (
             <p className="text-[12px] text-status-error">{planState.error}</p>
           ) : null}
@@ -177,24 +197,50 @@ export function LifecyclePanel({
       ) : null}
 
       {showSuspend ? (
-        <div className="mt-3 space-y-2 border-t border-border pt-3">
+        <form
+          action={suspendAction}
+          className="mt-3 space-y-2 border-t border-border pt-3"
+        >
+          <input type="hidden" name="slug" value={slug} />
           <p className="text-[12px] text-status-warn">
-            Suspend is a dunning action. Billing continues. This is not
-            offboarding — the customer remains on the books and invoices still
-            generate.
+            Suspend takes the public storefront offline via Caddy (holding page).
+            The container keeps running — admin stays reachable. Billing continues.
+            This is not offboarding.
           </p>
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-muted uppercase">
+              Type slug to confirm ({slug})
+            </span>
+            <input
+              name="confirm_slug"
+              required
+              autoComplete="off"
+              className="h-8 rounded-[4px] border border-border px-2 font-mono text-[13px]"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-muted uppercase">Reason</span>
+            <input
+              name="reason"
+              required
+              placeholder="e.g. overdue invoices past +21"
+              className="h-8 rounded-[4px] border border-border px-2 text-[13px]"
+            />
+          </label>
           <button
-            type="button"
-            disabled={pending}
-            onClick={() => {
-              setShowSuspend(false);
-              run(() => suspendTenantAction(slug));
-            }}
-            className="h-8 rounded-[4px] border border-status-warn px-3 text-[12px] font-semibold text-status-warn hover:bg-status-warn hover:text-white"
+            type="submit"
+            disabled={suspendPending}
+            className="h-8 rounded-[4px] border border-status-warn px-3 text-[12px] font-semibold text-status-warn hover:bg-status-warn hover:text-white disabled:opacity-60"
           >
             Confirm suspend
           </button>
-        </div>
+          {suspendState.error ? (
+            <p className="text-[12px] text-status-error">{suspendState.error}</p>
+          ) : null}
+          {suspendState.message ? (
+            <p className="text-[12px] text-status-ok">{suspendState.message}</p>
+          ) : null}
+        </form>
       ) : null}
 
       {showOffboard ? (

@@ -6,44 +6,10 @@ import {
   runPollNowAction,
   silenceOneHourAction,
 } from "@/app/(console)/health/actions";
+import { LineChart } from "@/components/charts/LineChart";
 import { StatusPill, type StatusTone } from "@/components/ui/status";
 import { formatSastDateTime } from "@/lib/datetime";
 import type { HealthTile, IncidentRow } from "@/lib/health/dashboard";
-
-function Sparkline({ values }: { values: number[] }) {
-  if (values.length < 2) {
-    return <div className="h-8 text-[11px] text-muted">No latency history</div>;
-  }
-  const max = Math.max(...values, 1);
-  const min = Math.min(...values, 0);
-  const range = Math.max(max - min, 1);
-  const w = 120;
-  const h = 32;
-  const points = values
-    .map((v, i) => {
-      const x = (i / (values.length - 1)) * w;
-      const y = h - ((v - min) / range) * (h - 4) - 2;
-      return `${x},${y}`;
-    })
-    .join(" ");
-
-  return (
-    <svg
-      width={w}
-      height={h}
-      viewBox={`0 0 ${w} ${h}`}
-      className="text-primary-light"
-      aria-hidden
-    >
-      <polyline
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        points={points}
-      />
-    </svg>
-  );
-}
 
 export function HealthDashboardClient({
   tiles,
@@ -159,7 +125,30 @@ function TenantTile({ tile }: { tile: HealthTile }) {
       </div>
 
       <div className="mb-2">
-        <Sparkline values={tile.sparkline} />
+        <div className="mb-1 text-[11px] font-semibold tracking-wide text-muted uppercase">
+          Latency (recent polls)
+        </div>
+        <LineChart
+          height={100}
+          emptyText="No latency history"
+          yFormat={(n) => `${Math.round(n)}ms`}
+          xLabels={tile.sparkline.map((_, i) => ({
+            label:
+              i === 0
+                ? "older"
+                : i === tile.sparkline.length - 1
+                  ? "now"
+                  : "",
+          }))}
+          series={[
+            {
+              id: "latency",
+              label: "Latency ms",
+              values: tile.sparkline,
+              color: "var(--primary)",
+            },
+          ]}
+        />
       </div>
 
       <dl className="grid grid-cols-[1fr_auto] gap-y-1 text-[12px]">
@@ -173,9 +162,11 @@ function TenantTile({ tile }: { tile: HealthTile }) {
         </dd>
         <dt className="text-muted">Last order</dt>
         <dd className="font-mono text-[11px]">
-          {tile.lastOrderAt
-            ? formatSastDateTime(tile.lastOrderAt)
-            : "—"}
+          {!tile.expectsOrders
+            ? "n/a"
+            : tile.lastOrderAt
+              ? formatSastDateTime(tile.lastOrderAt)
+              : "—"}
         </dd>
         <dt className="text-muted">Checked</dt>
         <dd className="font-mono text-[11px]">

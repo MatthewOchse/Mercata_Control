@@ -1,6 +1,11 @@
 import { connect as tlsConnect } from "node:tls";
 import { decryptSecret } from "@/lib/crypto/secrets";
-import type { FleetHealthPayload, PollResult } from "@/lib/health/types";
+import { fetchFleetAuthorized } from "@/lib/health/fleet-fetch";
+import {
+  planExpectsFleetHealth,
+  type FleetHealthPayload,
+  type PollResult,
+} from "@/lib/health/types";
 
 export type TenantProbeTarget = {
   id: number;
@@ -8,6 +13,8 @@ export type TenantProbeTarget = {
   primaryDomain: string;
   healthPath: string;
   fleetSecretCipher: string;
+  /** Active subscription plan code, if any. */
+  planCode: string | null;
 };
 
 function normaliseDomain(domain: string): string {
@@ -113,18 +120,10 @@ export async function probeFleetHealth(
   }
 
   const started = Date.now();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, {
-      method: "GET",
-      signal: controller.signal,
-      headers: {
-        authorization: `Bearer ${secret}`,
-        accept: "application/json",
-        "user-agent": "MercataControl/fleet-health",
-      },
-      cache: "no-store",
+    const res = await fetchFleetAuthorized(url, secret, {
+      timeoutMs,
+      userAgent: "MercataControl/fleet-health",
     });
     const latencyMs = Date.now() - started;
     if (!res.ok) {
@@ -136,10 +135,9 @@ export async function probeFleetHealth(
       };
     }
     const payload = (await res.json()) as FleetHealthPayload;
-    const ok =
-      payload.status === "ok" &&
-      payload.db?.reachable !== false;
-    return { ok, latencyMs, payload, error: ok ? null : "Fleet status not ok" };
+    // Endpoint reachable + JSON OK. Soft issues (degraded / pending migrations)
+    // are separate signals — not site_down.
+    return { ok: true, latencyMs, payload, error: null };
   } catch (err) {
     return {
       ok: false,
@@ -147,21 +145,30 @@ export async function probeFleetHealth(
       payload: null,
       error: err instanceof Error ? err.message : "Fleet probe failed",
     };
-  } finally {
-    clearTimeout(timer);
   }
 }
 
 export async function pollTenant(
   target: TenantProbeTarget,
 ): Promise<PollResult> {
+  // Sites (service_hosting) are marketing/brochure deploys — they have no
+  // fleet secret endpoint. Probing /api/_fleet/health there always 404s and
+  // falsely raises site_down. For those, origin HTTPS is the health check.
+  const expectsFleet = planExpectsFleetHealth(target.planCode);
+
   const [https, tlsDays, fleet] = await Promise.all([
     probeHttps(target.primaryDomain),
     probeTlsDaysRemaining(target.primaryDomain),
-    probeFleetHealth(target),
+    expectsFleet
+      ? probeFleetHealth(target)
+      : Promise.resolve({
+          ok: true,
+          latencyMs: null as number | null,
+          payload: null as FleetHealthPayload | null,
+          error: null as string | null,
+        }),
   ]);
 
-  // Prefer fleet endpoint latency when available; else HTTPS probe.
   const latencyMs = fleet.latencyMs ?? https.latencyMs;
   const ok = https.ok && fleet.ok;
   const errorParts = [https.error, fleet.error].filter(Boolean);
@@ -169,6 +176,7 @@ export async function pollTenant(
   return {
     tenantId: target.id,
     slug: target.slug,
+    planCode: target.planCode,
     ok,
     latencyMs,
     certDaysRemaining: tlsDays,

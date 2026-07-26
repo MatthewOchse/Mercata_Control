@@ -4,13 +4,26 @@ import { Resend } from "resend";
 import { writeAuditLog } from "@/lib/db/audit";
 import { execute, query, withTransaction } from "@/lib/db/pool";
 import type { RowDataPacket } from "mysql2/promise";
-import { formatZAR } from "@/lib/money";
+import {
+  renderInvoiceEmailHtml,
+  renderInvoiceEmailSubject,
+  renderInvoiceEmailText,
+} from "@/lib/invoices/email-template";
 
-function accountsFrom(): string {
+function invoiceFrom(): string {
   return (
     process.env.INVOICE_EMAIL_FROM?.trim() ||
-    "Mercata Accounts <accounts@mercata.co.za>"
+    "Mercata Billing <billings@mercata.co.za>"
   );
+}
+
+/** Always CC Mercata billing so every outbound invoice is archived in-box. */
+function invoiceBillingCc(): string {
+  const explicit = process.env.INVOICE_EMAIL_CC?.trim();
+  if (explicit) return explicit;
+  const from = invoiceFrom();
+  const angle = from.match(/<([^>]+)>/);
+  return (angle?.[1] ?? from).trim().toLowerCase() || "billings@mercata.co.za";
 }
 
 function resendClient(): Resend | null {
@@ -39,13 +52,16 @@ export async function sendInvoiceEmail(
       total_cents: number;
       due_date: string | null;
       issue_date: string | null;
+      period_start: string | null;
+      period_end: string | null;
       tenant_id: number;
       trading_name: string;
       sent_at: string | null;
     })[]
   >(
     `SELECT i.invoice_number, i.status, i.pdf_path, i.total_cents, i.due_date,
-            i.issue_date, i.sent_at, i.tenant_id, t.trading_name
+            i.issue_date, i.period_start, i.period_end, i.sent_at, i.tenant_id,
+            t.trading_name
      FROM invoices i
      INNER JOIN tenants t ON t.id = i.tenant_id
      WHERE i.id = :id LIMIT 1`,
@@ -60,7 +76,15 @@ export async function sendInvoiceEmail(
     return { sent: false, error: "Invoice PDF not ready" };
   }
 
-  const contacts = await query<
+  const invoiceFlagged = await query<
+    (RowDataPacket & { email: string; name: string })[]
+  >(
+    `SELECT email, name FROM tenant_contacts
+     WHERE tenant_id = :tid AND receive_invoices = 1
+     ORDER BY is_primary DESC, id ASC`,
+    { tid: inv.tenant_id },
+  );
+  const legacyBilling = await query<
     (RowDataPacket & { email: string; name: string })[]
   >(
     `SELECT email, name FROM tenant_contacts
@@ -68,9 +92,10 @@ export async function sendInvoiceEmail(
      ORDER BY is_primary DESC, id ASC LIMIT 1`,
     { tid: inv.tenant_id },
   );
-  const billing = contacts[0];
-  if (!billing?.email) {
-    return { sent: false, error: "No billing contact email" };
+  const recipients =
+    invoiceFlagged.length > 0 ? invoiceFlagged : legacyBilling;
+  if (recipients.length === 0) {
+    return { sent: false, error: "No invoice contact email" };
   }
 
   const client = resendClient();
@@ -85,30 +110,39 @@ export async function sendInvoiceEmail(
     return { sent: false, error: "PDF file missing on disk" };
   }
 
-  const subject = `Invoice ${inv.invoice_number} — ${inv.trading_name}`;
-  const body = [
-    `Hi ${billing.name},`,
-    "",
-    `Please find invoice ${inv.invoice_number} attached.`,
-    `Amount due: ${formatZAR(Number(inv.total_cents))}`,
-    inv.due_date ? `Due date: ${String(inv.due_date).slice(0, 10)}` : null,
-    "",
-    "Pay by EFT using the banking details on the invoice.",
-    `Reference: ${inv.invoice_number}`,
-    "",
-    "Kind regards,",
-    "Mercata Accounts",
-    "accounts@mercata.co.za",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  const primary = recipients[0]!;
+  const mail = {
+    recipientName: primary.name,
+    tradingName: inv.trading_name,
+    invoiceNumber: inv.invoice_number,
+    totalCents: Number(inv.total_cents),
+    dueDate: inv.due_date ? String(inv.due_date).slice(0, 10) : null,
+    issueDate: inv.issue_date ? String(inv.issue_date).slice(0, 10) : null,
+    periodStart: inv.period_start
+      ? String(inv.period_start).slice(0, 10)
+      : null,
+    periodEnd: inv.period_end ? String(inv.period_end).slice(0, 10) : null,
+  };
+  const subject = renderInvoiceEmailSubject(mail);
+  const text = renderInvoiceEmailText(mail);
+  const html = renderInvoiceEmailHtml(mail);
+  const billingCc = invoiceBillingCc();
+  const to = [
+    ...new Set(recipients.map((r) => r.email.trim()).filter(Boolean)),
+  ];
+  const cc =
+    to.some((e) => e.toLowerCase() === billingCc.toLowerCase())
+      ? undefined
+      : [billingCc];
 
   try {
     const { error } = await client.emails.send({
-      from: accountsFrom(),
-      to: [billing.email],
+      from: invoiceFrom(),
+      to,
+      cc,
       subject,
-      text: body,
+      text,
+      html,
       attachments: [
         {
           filename: `${inv.invoice_number}.pdf`,
@@ -129,7 +163,8 @@ export async function sendInvoiceEmail(
         entityId: invoiceId,
         after: {
           error: message,
-          recipient: billing.email,
+          recipient: to.join(", "),
+          cc: cc ?? null,
           invoice_number: inv.invoice_number,
           sent_at: null,
         },
@@ -149,7 +184,8 @@ export async function sendInvoiceEmail(
       entityType: "invoice",
       entityId: invoiceId,
       after: {
-        recipient: billing.email,
+        recipient: to.join(", "),
+        cc: cc ?? null,
         invoice_number: inv.invoice_number,
       },
     });

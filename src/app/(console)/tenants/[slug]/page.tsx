@@ -18,14 +18,14 @@ import {
   outstandingBalanceCents,
 } from "@/lib/tenants/queries";
 import {
-  invoiceStatusLabel,
-  invoiceStatusTone,
   tenantStatusLabel,
   tenantStatusTone,
 } from "@/lib/tenants/status";
 import { ActivityTab } from "./tabs/activity";
+import { AnalyticsTab } from "./tabs/analytics";
 import { BillingTab } from "./tabs/billing";
 import { DigestTab } from "./tabs/digest";
+import { FilesTab } from "./tabs/files";
 import { InfraTab } from "./tabs/infra";
 import { LifecyclePanel } from "./lifecycle-panel";
 import { OverviewTab } from "./tabs/overview";
@@ -33,6 +33,8 @@ import { OverviewTab } from "./tabs/overview";
 const TABS = [
   { id: "overview", label: "Overview" },
   { id: "billing", label: "Billing" },
+  { id: "files", label: "Files" },
+  { id: "analytics", label: "Analytics" },
   { id: "digest", label: "Digest" },
   { id: "infra", label: "Infra" },
   { id: "activity", label: "Activity" },
@@ -45,7 +47,7 @@ export default async function TenantDetailPage({
   searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ tab?: string }>;
+  searchParams: Promise<{ tab?: string; period?: string }>;
 }) {
   const { slug } = await params;
   const sp = await searchParams;
@@ -79,6 +81,22 @@ export default async function TenantDetailPage({
   const current = currentSubscription(subscriptions);
   const mrr =
     (current?.current_monthly_cents ?? 0) + activeRecurringMrr(addons);
+
+  const periodKey =
+    sp.period === "1d" ||
+    sp.period === "7d" ||
+    sp.period === "28d" ||
+    sp.period === "30d" ||
+    sp.period === "90d" ||
+    sp.period === "this_vs_last_month"
+      ? sp.period
+      : "1d";
+  const analyticsView =
+    tab === "analytics" || tab === "overview"
+      ? await (
+          await import("@/lib/analytics/queries")
+        ).getTenantAnalyticsView(tenant.id, periodKey)
+      : null;
 
   return (
     <>
@@ -147,13 +165,27 @@ export default async function TenantDetailPage({
 
         <div className="mt-4">
           {tab === "overview" ? (
-            <OverviewTab
-              tenant={tenant}
-              contacts={contacts}
-              infra={infra}
-              current={current}
-              mrrCents={mrr}
-            />
+            <div className="space-y-6">
+              <OverviewTab
+                tenant={tenant}
+                contacts={contacts}
+                infra={infra}
+                current={current}
+                mrrCents={mrr}
+              />
+              {analyticsView ? (
+                <section>
+                  <h3 className="mb-3 text-[12px] font-semibold tracking-wide text-muted uppercase">
+                    Traffic &amp; sales
+                  </h3>
+                  <AnalyticsTab
+                    slug={tenant.slug}
+                    view={analyticsView}
+                    tab="overview"
+                  />
+                </section>
+              ) : null}
+            </div>
           ) : null}
           {tab === "billing" ? (
             <BillingTab
@@ -164,9 +196,21 @@ export default async function TenantDetailPage({
               invoices={invoices}
               payments={payments}
               outstandingCents={outstanding}
-              invoiceStatusLabel={invoiceStatusLabel}
-              invoiceStatusTone={invoiceStatusTone}
+              catalogMonthlyCents={
+                current
+                  ? (plans.find((p) => p.code === current.plan_code)
+                      ?.monthly_cents ?? null)
+                  : null
+              }
+              billingDay={tenant.billing_day}
+              plans={plans}
             />
+          ) : null}
+          {tab === "files" ? (
+            <FilesTab tenantId={tenant.id} tenantSlug={tenant.slug} />
+          ) : null}
+          {tab === "analytics" && analyticsView ? (
+            <AnalyticsTab slug={tenant.slug} view={analyticsView} />
           ) : null}
           {tab === "digest" ? (
             <DigestTab
@@ -174,6 +218,12 @@ export default async function TenantDetailPage({
               cadence={tenant.digest_cadence}
               digestDay={tenant.digest_day}
               ga4PropertyId={tenant.ga4_property_id}
+              ga4VerifiedAt={
+                tenant.ga4_verified_at
+                  ? String(tenant.ga4_verified_at)
+                  : null
+              }
+              ga4DisplayName={tenant.ga4_display_name}
               brandPrimaryColor={tenant.brand_primary_color}
               brandLogoUrl={tenant.brand_logo_url}
             />

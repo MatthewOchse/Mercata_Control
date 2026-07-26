@@ -21,6 +21,15 @@ export async function requireOperator(): Promise<Operator> {
   return operator;
 }
 
+/** Fleet provision UI + enqueue — super-admins only. */
+export async function requireSuperAdmin(): Promise<Operator> {
+  const operator = await requireOperator();
+  if (!operator.is_super) {
+    throw new Error("Forbidden: super-admin only");
+  }
+  return operator;
+}
+
 export async function logoutCurrentSession(): Promise<void> {
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE)?.value;

@@ -26,6 +26,8 @@
 .data/
 storage/invoices/**/*.pdf
 !storage/invoices/.gitkeep
+storage/business-files/**/*
+!storage/business-files/.gitkeep
 
 
 # debug
@@ -37,8 +39,15 @@ yarn-error.log*
 # env files
 .env
 .env.local
+.env.worker
 .env.*.local
 !.env.example
+
+# Google service account keys (never commit)
+*firebase*.json
+*-firebase-adminsdk-*.json
+mercata-analytics-*.json
+**/service-account*.json
 
 # vercel
 .vercel

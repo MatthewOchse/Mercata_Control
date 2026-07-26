@@ -30,6 +30,18 @@ export function splitSqlStatements(sql: string): string[] {
 export async function ensureSchemaMigrationsTable(
   conn: Connection,
 ): Promise<void> {
+  // Prefer a privilege-light existence check. Production app users have
+  // DML only — CREATE TABLE IF NOT EXISTS still requires CREATE even when
+  // the table already exists, which breaks `deploy-control.sh` migrate.
+  const [rows] = await conn.query<RowDataPacket[]>(
+    `SELECT 1 AS ok
+     FROM information_schema.tables
+     WHERE table_schema = DATABASE()
+       AND table_name = 'schema_migrations'
+     LIMIT 1`,
+  );
+  if (rows.length > 0) return;
+
   await conn.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       migration_id VARCHAR(64)  NOT NULL,

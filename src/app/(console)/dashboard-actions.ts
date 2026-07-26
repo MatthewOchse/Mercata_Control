@@ -58,7 +58,10 @@ export async function confirmSuspensionFromTaskAction(
 ): Promise<DashActionState> {
   const operator = await requireOperator();
   try {
-    await suspendTenant(tenantSlug, operator.email);
+    await suspendTenant(tenantSlug, operator.email, {
+      reason: "Confirmed from dunning suspension task",
+      confirmSlug: tenantSlug,
+    });
     await withTransaction(async (conn) => {
       await conn.execute(
         `UPDATE operator_tasks
@@ -69,6 +72,7 @@ export async function confirmSuspensionFromTaskAction(
     });
     revalidatePath("/");
     revalidatePath(`/tenants/${tenantSlug}`);
+    revalidatePath("/health");
     return { message: `Suspended ${tenantSlug}` };
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Suspend failed" };

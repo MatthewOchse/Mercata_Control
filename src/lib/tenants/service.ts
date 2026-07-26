@@ -1,6 +1,7 @@
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import {
   firstDayOfNextMonth,
+  firstDayOfThisMonth,
   lastDayOfThisMonth,
   sastToday,
 } from "@/lib/billing/cycle";
@@ -16,14 +17,53 @@ export type CreateTenantInput = {
   legalName: string;
   tradingName: string;
   slug: string;
-  primaryContact: { name: string; email: string; phone?: string };
-  billingContact: { name: string; email: string; phone?: string };
+  primaryContact: {
+    name: string;
+    email: string;
+    phone?: string;
+    receiveInvoices?: boolean;
+    receiveDigests?: boolean;
+  };
+  billingContact: {
+    name: string;
+    email: string;
+    phone?: string;
+    receiveInvoices?: boolean;
+    receiveDigests?: boolean;
+  };
+  /** Extra recipients beyond primary/billing (role=technical). */
+  extraContacts?: Array<{
+    name: string;
+    email: string;
+    receiveInvoices?: boolean;
+    receiveDigests?: boolean;
+  }>;
   primaryDomain: string;
   planCode: string;
   setupFeeCents: number;
+  /** Override catalog plan price (cents). Omit to use catalog. */
+  monthlyCentsOverride?: number;
+  /** Days after invoice issue until due. Default 7. Kept for legacy; due date prefers billingDay. */
+  paymentDueDays?: number;
+  /** Day of month (1–28) they are billed. Default 1. */
+  billingDay?: number;
   host?: string;
   actor: string;
 };
+
+function assertPaymentDueDays(days: number): number {
+  if (!Number.isInteger(days) || days < 0 || days > 90) {
+    throw new Error("Payment due days must be an integer from 0 to 90");
+  }
+  return days;
+}
+
+function assertBillingDay(day: number): number {
+  if (!Number.isInteger(day) || day < 1 || day > 28) {
+    throw new Error("Billing day must be an integer from 1 to 28");
+  }
+  return day;
+}
 
 function normaliseSlug(slug: string): string {
   return slug
@@ -49,13 +89,27 @@ async function getPlanCents(
 async function loadTenant(
   conn: PoolConnection,
   slug: string,
-): Promise<RowDataPacket & { id: number; slug: string; status: TenantStatus }> {
+): Promise<
+  RowDataPacket & {
+    id: number;
+    slug: string;
+    status: TenantStatus;
+    legal_name: string;
+    trading_name: string;
+  }
+> {
   const [rows] = await conn.execute<RowDataPacket[]>(
     `SELECT id, slug, status, legal_name, trading_name FROM tenants WHERE slug = ? LIMIT 1`,
     [slug],
   );
   const row = rows[0] as
-    | (RowDataPacket & { id: number; slug: string; status: TenantStatus })
+    | (RowDataPacket & {
+        id: number;
+        slug: string;
+        status: TenantStatus;
+        legal_name: string;
+        trading_name: string;
+      })
     | undefined;
   if (!row) throw new Error(`Tenant not found: ${slug}`);
   return { ...row, id: Number(row.id) };
@@ -76,36 +130,90 @@ export async function createTenant(input: CreateTenantInput): Promise<{ slug: st
   const fleetCipher = encryptSecret(fleetPlain);
 
   return withTransaction(async (conn) => {
-    const monthlyCents = await getPlanCents(conn, input.planCode);
+    const [serverRows] = await conn.execute<
+      (RowDataPacket & { id: number })[]
+    >(`SELECT id FROM servers WHERE name = ? LIMIT 1`, [host]);
+    const serverId = Number(serverRows[0]?.id);
+    if (!Number.isFinite(serverId) || serverId <= 0) {
+      throw new Error(
+        `Server "${host}" is not registered — add it under /servers first`,
+      );
+    }
+
+    const catalogCents = await getPlanCents(conn, input.planCode);
+    const monthlyCents =
+      input.monthlyCentsOverride !== undefined
+        ? input.monthlyCentsOverride
+        : catalogCents;
+    if (!Number.isInteger(monthlyCents) || monthlyCents < 0) {
+      throw new Error("Monthly price must be a non-negative integer (cents)");
+    }
+    const paymentDueDays = assertPaymentDueDays(
+      input.paymentDueDays !== undefined ? input.paymentDueDays : 7,
+    );
+    const billingDay = assertBillingDay(
+      input.billingDay !== undefined ? input.billingDay : 1,
+    );
 
     const [tenantResult] = await conn.execute<ResultSetHeader>(
-      `INSERT INTO tenants (slug, legal_name, trading_name, status)
-       VALUES (?, ?, ?, 'prospect')`,
-      [slug, input.legalName.trim(), input.tradingName.trim()],
+      `INSERT INTO tenants
+         (server_id, slug, legal_name, trading_name, status, payment_due_days, billing_day)
+       VALUES (?, ?, ?, ?, 'prospect', ?, ?)`,
+      [
+        serverId,
+        slug,
+        input.legalName.trim(),
+        input.tradingName.trim(),
+        paymentDueDays,
+        billingDay,
+      ],
     );
     const tenantId = Number(tenantResult.insertId);
 
     await conn.execute(
-      `INSERT INTO tenant_contacts (tenant_id, name, email, phone, role, is_primary)
-       VALUES (?, ?, ?, ?, 'primary', 1)`,
+      `INSERT INTO tenant_contacts
+         (tenant_id, name, email, phone, role, is_primary, receive_invoices, receive_digests)
+       VALUES (?, ?, ?, ?, 'primary', 1, ?, ?)`,
       [
         tenantId,
         input.primaryContact.name.trim(),
         input.primaryContact.email.trim().toLowerCase(),
         input.primaryContact.phone?.trim() || null,
+        input.primaryContact.receiveInvoices ? 1 : 0,
+        input.primaryContact.receiveDigests ? 1 : 0,
       ],
     );
 
     await conn.execute(
-      `INSERT INTO tenant_contacts (tenant_id, name, email, phone, role, is_primary)
-       VALUES (?, ?, ?, ?, 'billing', 0)`,
+      `INSERT INTO tenant_contacts
+         (tenant_id, name, email, phone, role, is_primary, receive_invoices, receive_digests)
+       VALUES (?, ?, ?, ?, 'billing', 0, ?, ?)`,
       [
         tenantId,
         input.billingContact.name.trim(),
         input.billingContact.email.trim().toLowerCase(),
         input.billingContact.phone?.trim() || null,
+        input.billingContact.receiveInvoices ? 1 : 0,
+        input.billingContact.receiveDigests ? 1 : 0,
       ],
     );
+
+    for (const extra of input.extraContacts ?? []) {
+      const email = extra.email.trim().toLowerCase();
+      if (!email.includes("@")) continue;
+      await conn.execute(
+        `INSERT INTO tenant_contacts
+           (tenant_id, name, email, phone, role, is_primary, receive_invoices, receive_digests)
+         VALUES (?, ?, ?, NULL, 'technical', 0, ?, ?)`,
+        [
+          tenantId,
+          extra.name.trim() || email,
+          email,
+          extra.receiveInvoices ? 1 : 0,
+          extra.receiveDigests ? 1 : 0,
+        ],
+      );
+    }
 
     await conn.execute(
       `INSERT INTO tenant_infra
@@ -148,6 +256,9 @@ export async function createTenant(input: CreateTenantInput): Promise<{ slug: st
         status: "prospect",
         plan_code: input.planCode,
         current_monthly_cents: monthlyCents,
+        catalog_monthly_cents: catalogCents,
+        payment_due_days: paymentDueDays,
+        billing_day: billingDay,
         setup_fee_cents: input.setupFeeCents,
         subscription_id: Number(subResult.insertId),
         tenant_id: tenantId,
@@ -158,13 +269,21 @@ export async function createTenant(input: CreateTenantInput): Promise<{ slug: st
   });
 }
 
-export async function activateTenant(slug: string, actor: string): Promise<void> {
+export async function activateTenant(
+  slug: string,
+  actor: string,
+): Promise<{ invoiceId: number | null; periodStart: string; periodEnd: string }> {
   const today = sastToday();
+  const periodStart = firstDayOfThisMonth();
+  const periodEnd = lastDayOfThisMonth();
+  let tenantId = 0;
+
   await withTransaction(async (conn) => {
     const tenant = await loadTenant(conn, slug);
     if (tenant.status !== "prospect") {
       throw new Error("Only prospect tenants can be activated");
     }
+    tenantId = tenant.id;
 
     const before = { status: tenant.status };
 
@@ -201,15 +320,38 @@ export async function activateTenant(slug: string, actor: string): Promise<void>
         subscription_id: Number(sub.id),
         tenant_id: tenant.id,
         slug,
+        signup_period_start: periodStart,
+        signup_period_end: periodEnd,
       },
     });
   });
+
+  // Invoice the calendar month they activate in (full month, no pro-rata).
+  let invoiceId: number | null = null;
+  try {
+    const { generateInvoiceForTenant } = await import("@/lib/invoices/generate");
+    const draft = await generateInvoiceForTenant(
+      tenantId,
+      periodStart,
+      periodEnd,
+      actor,
+    );
+    invoiceId = draft.invoiceId;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.includes("already exists")) {
+      throw err;
+    }
+  }
+
+  return { invoiceId, periodStart, periodEnd };
 }
 
 export async function changePlan(
   slug: string,
   newPlanCode: string,
   actor: string,
+  monthlyCentsOverride?: number,
 ): Promise<{ effectiveOn: string; endsOn: string }> {
   const endsOn = lastDayOfThisMonth();
   const effectiveOn = firstDayOfNextMonth();
@@ -220,10 +362,17 @@ export async function changePlan(
       throw new Error("Cannot change plan for an offboarded tenant");
     }
     if (tenant.status === "prospect") {
-      throw new Error("Activate the tenant before changing plan, or edit the prospect subscription via recreate");
+      throw new Error(
+        "Use Change package on the Billing tab for prospects (applies immediately)",
+      );
     }
 
-    const monthlyCents = await getPlanCents(conn, newPlanCode);
+    const catalogCents = await getPlanCents(conn, newPlanCode);
+    const monthlyCents =
+      monthlyCentsOverride !== undefined ? monthlyCentsOverride : catalogCents;
+    if (!Number.isInteger(monthlyCents) || monthlyCents < 0) {
+      throw new Error("Monthly price must be a non-negative integer (cents)");
+    }
     const today = sastToday();
 
     const [subs] = await conn.execute<
@@ -248,7 +397,7 @@ export async function changePlan(
       throw new Error("Tenant is already on that plan");
     }
 
-    // Never mutate price. Schedule end-of-month; leave status active until then.
+    // Never mutate the ending subscription's price. Schedule end-of-month.
     await conn.execute(
       `UPDATE subscriptions SET ends_on = ? WHERE id = ?`,
       [endsOn, current.id],
@@ -278,6 +427,7 @@ export async function changePlan(
         slug,
         plan_code: newPlanCode,
         current_monthly_cents: monthlyCents,
+        catalog_monthly_cents: catalogCents,
         started_on: effectiveOn,
         previous_ends_on: endsOn,
       },
@@ -285,6 +435,410 @@ export async function changePlan(
   });
 
   return { effectiveOn, endsOn };
+}
+
+/**
+ * Immediately set package (plan + price) on the open subscription.
+ * Use from Billing for corrections / prospect setup. Rebuilds draft invoices.
+ */
+export async function setTenantPackage(
+  slug: string,
+  planCode: string,
+  actor: string,
+  monthlyCentsOverride?: number,
+): Promise<{
+  previousPlan: string;
+  previousCents: number;
+  monthlyCents: number;
+  draftsRebuilt: number;
+}> {
+  const result = await withTransaction(async (conn) => {
+    const tenant = await loadTenant(conn, slug);
+    if (tenant.status === "offboarded") {
+      throw new Error("Cannot change package for an offboarded tenant");
+    }
+
+    const catalogCents = await getPlanCents(conn, planCode);
+    const monthlyCents =
+      monthlyCentsOverride !== undefined ? monthlyCentsOverride : catalogCents;
+    if (!Number.isInteger(monthlyCents) || monthlyCents < 0) {
+      throw new Error("Monthly price must be a non-negative integer (cents)");
+    }
+
+    const [subs] = await conn.execute<
+      (RowDataPacket & {
+        id: number;
+        plan_code: string;
+        current_monthly_cents: number;
+      })[]
+    >(
+      `SELECT id, plan_code, current_monthly_cents FROM subscriptions
+       WHERE tenant_id = ?
+         AND status = 'active'
+         AND ends_on IS NULL
+       ORDER BY id DESC
+       LIMIT 1`,
+      [tenant.id],
+    );
+    const current = subs[0];
+    if (!current) throw new Error("No open subscription");
+
+    const previousPlan = current.plan_code;
+    const previousCents = Number(current.current_monthly_cents);
+    if (previousPlan === planCode && previousCents === monthlyCents) {
+      throw new Error("Package and price are already set to those values");
+    }
+
+    await conn.execute(
+      `UPDATE subscriptions
+       SET plan_code = ?, current_monthly_cents = ?
+       WHERE id = ?`,
+      [planCode, monthlyCents, current.id],
+    );
+
+    await writeAuditLog(conn, {
+      actor,
+      action: "subscription.set_package",
+      entityType: "subscription",
+      entityId: Number(current.id),
+      before: {
+        tenant_id: tenant.id,
+        slug,
+        plan_code: previousPlan,
+        current_monthly_cents: previousCents,
+      },
+      after: {
+        tenant_id: tenant.id,
+        slug,
+        plan_code: planCode,
+        current_monthly_cents: monthlyCents,
+        catalog_monthly_cents: catalogCents,
+      },
+    });
+
+    return {
+      previousPlan,
+      previousCents,
+      monthlyCents,
+      tenantId: tenant.id,
+    };
+  });
+
+  const { rebuildTenantDraftInvoices } = await import("@/lib/invoices/generate");
+  const draftsRebuilt = await rebuildTenantDraftInvoices(
+    result.tenantId,
+    actor,
+  );
+
+  return {
+    previousPlan: result.previousPlan,
+    previousCents: result.previousCents,
+    monthlyCents: result.monthlyCents,
+    draftsRebuilt,
+  };
+}
+
+/**
+ * Set the billed monthly package price on the active subscription.
+ * Used for discounts / custom pricing. Affects the next invoice generated
+ * (no pro-rata — mid-cycle changes apply from the next billing run).
+ */
+export async function adjustSubscriptionPrice(
+  slug: string,
+  monthlyCents: number,
+  actor: string,
+  note?: string,
+): Promise<{ subscriptionId: number; previousCents: number; draftsRebuilt: number }> {
+  if (!Number.isInteger(monthlyCents) || monthlyCents < 0) {
+    throw new Error("Monthly price must be a non-negative integer (cents)");
+  }
+
+  const result = await withTransaction(async (conn) => {
+    const tenant = await loadTenant(conn, slug);
+    if (tenant.status === "offboarded") {
+      throw new Error("Cannot adjust price for an offboarded tenant");
+    }
+
+    const today = sastToday();
+    const [subs] = await conn.execute<
+      (RowDataPacket & {
+        id: number;
+        plan_code: string;
+        current_monthly_cents: number;
+      })[]
+    >(
+      `SELECT id, plan_code, current_monthly_cents FROM subscriptions
+       WHERE tenant_id = ?
+         AND status = 'active'
+         AND (ends_on IS NULL OR ends_on >= ?)
+       ORDER BY started_on DESC, id DESC
+       LIMIT 1`,
+      [tenant.id, today],
+    );
+    const current = subs[0];
+    if (!current) throw new Error("No active subscription");
+
+    const previousCents = Number(current.current_monthly_cents);
+    if (previousCents === monthlyCents) {
+      throw new Error("Price is already set to that amount");
+    }
+
+    await conn.execute(
+      `UPDATE subscriptions SET current_monthly_cents = ? WHERE id = ?`,
+      [monthlyCents, current.id],
+    );
+
+    await writeAuditLog(conn, {
+      actor,
+      action: "subscription.adjust_price",
+      entityType: "subscription",
+      entityId: Number(current.id),
+      before: {
+        tenant_id: tenant.id,
+        slug,
+        plan_code: current.plan_code,
+        current_monthly_cents: previousCents,
+      },
+      after: {
+        tenant_id: tenant.id,
+        slug,
+        plan_code: current.plan_code,
+        current_monthly_cents: monthlyCents,
+        note: note?.trim() || null,
+      },
+    });
+
+    return {
+      subscriptionId: Number(current.id),
+      previousCents,
+      tenantId: tenant.id,
+    };
+  });
+
+  const { rebuildTenantDraftInvoices } = await import("@/lib/invoices/generate");
+  const draftsRebuilt = await rebuildTenantDraftInvoices(
+    result.tenantId,
+    actor,
+  );
+
+  return {
+    subscriptionId: result.subscriptionId,
+    previousCents: result.previousCents,
+    draftsRebuilt,
+  };
+}
+
+/** Update payment terms (days after invoice issue until due). Applies to future issues. */
+export async function setPaymentDueDays(
+  slug: string,
+  paymentDueDays: number,
+  actor: string,
+): Promise<{ previous: number }> {
+  const days = assertPaymentDueDays(paymentDueDays);
+
+  return withTransaction(async (conn) => {
+    const tenant = await loadTenant(conn, slug);
+    if (tenant.status === "offboarded") {
+      throw new Error("Cannot change payment terms for an offboarded tenant");
+    }
+
+    const [rows] = await conn.execute<
+      (RowDataPacket & { payment_due_days: number })[]
+    >(`SELECT payment_due_days FROM tenants WHERE id = ? LIMIT 1`, [tenant.id]);
+    const previous = Number(rows[0]?.payment_due_days ?? 7);
+    if (previous === days) {
+      throw new Error("Payment terms are already set to that value");
+    }
+
+    await conn.execute(
+      `UPDATE tenants SET payment_due_days = ? WHERE id = ?`,
+      [days, tenant.id],
+    );
+
+    await writeAuditLog(conn, {
+      actor,
+      action: "tenant.set_payment_due_days",
+      entityType: "tenant",
+      entityId: tenant.id,
+      before: { slug, payment_due_days: previous },
+      after: { slug, payment_due_days: days },
+    });
+
+    return { previous };
+  });
+}
+
+/** Day of month (1–28) the customer is billed / invoice is due. */
+export async function setBillingDay(
+  slug: string,
+  billingDay: number,
+  actor: string,
+): Promise<{ previous: number }> {
+  const day = assertBillingDay(billingDay);
+
+  return withTransaction(async (conn) => {
+    const tenant = await loadTenant(conn, slug);
+    if (tenant.status === "offboarded") {
+      throw new Error("Cannot change billing day for an offboarded tenant");
+    }
+
+    const [rows] = await conn.execute<
+      (RowDataPacket & { billing_day: number })[]
+    >(`SELECT billing_day FROM tenants WHERE id = ? LIMIT 1`, [tenant.id]);
+    const previous = Number(rows[0]?.billing_day ?? 1);
+    if (previous === day) {
+      throw new Error("Billing day is already set to that value");
+    }
+
+    await conn.execute(`UPDATE tenants SET billing_day = ? WHERE id = ?`, [
+      day,
+      tenant.id,
+    ]);
+
+    await writeAuditLog(conn, {
+      actor,
+      action: "tenant.set_billing_day",
+      entityType: "tenant",
+      entityId: tenant.id,
+      before: { slug, billing_day: previous },
+      after: { slug, billing_day: day },
+    });
+
+    return { previous };
+  });
+}
+
+export async function updateTenantContact(
+  slug: string,
+  contactId: number,
+  input: {
+    name: string;
+    email: string;
+    phone: string | null;
+    receiveInvoices?: boolean;
+    receiveDigests?: boolean;
+  },
+  actor: string,
+): Promise<void> {
+  const name = input.name.trim();
+  const email = input.email.trim().toLowerCase();
+  const phone = input.phone?.trim() || null;
+  if (!name) throw new Error("Contact name is required");
+  if (!email || !email.includes("@")) throw new Error("Valid email is required");
+
+  await withTransaction(async (conn) => {
+    const tenant = await loadTenant(conn, slug);
+    const [rows] = await conn.execute<
+      (RowDataPacket & {
+        id: number;
+        name: string;
+        email: string;
+        phone: string | null;
+        role: string;
+        receive_invoices: number;
+        receive_digests: number;
+      })[]
+    >(
+      `SELECT id, name, email, phone, role, receive_invoices, receive_digests
+       FROM tenant_contacts
+       WHERE id = ? AND tenant_id = ? LIMIT 1`,
+      [contactId, tenant.id],
+    );
+    const contact = rows[0];
+    if (!contact) throw new Error("Contact not found");
+
+    const receiveInvoices =
+      input.receiveInvoices === undefined
+        ? Number(contact.receive_invoices)
+        : input.receiveInvoices
+          ? 1
+          : 0;
+    const receiveDigests =
+      input.receiveDigests === undefined
+        ? Number(contact.receive_digests)
+        : input.receiveDigests
+          ? 1
+          : 0;
+
+    await conn.execute(
+      `UPDATE tenant_contacts
+       SET name = ?, email = ?, phone = ?,
+           receive_invoices = ?, receive_digests = ?
+       WHERE id = ?`,
+      [name, email, phone, receiveInvoices, receiveDigests, contactId],
+    );
+
+    await writeAuditLog(conn, {
+      actor,
+      action: "tenant_contact.update",
+      entityType: "tenant_contact",
+      entityId: contactId,
+      before: {
+        slug,
+        name: contact.name,
+        email: contact.email,
+        phone: contact.phone,
+        role: contact.role,
+        receive_invoices: Number(contact.receive_invoices),
+        receive_digests: Number(contact.receive_digests),
+      },
+      after: {
+        slug,
+        name,
+        email,
+        phone,
+        role: contact.role,
+        receive_invoices: receiveInvoices,
+        receive_digests: receiveDigests,
+      },
+    });
+  });
+}
+
+export async function addTenantContact(
+  slug: string,
+  input: {
+    name: string;
+    email: string;
+    phone?: string | null;
+    receiveInvoices?: boolean;
+    receiveDigests?: boolean;
+  },
+  actor: string,
+): Promise<void> {
+  const name = input.name.trim() || input.email.trim();
+  const email = input.email.trim().toLowerCase();
+  if (!email.includes("@")) throw new Error("Valid email is required");
+
+  await withTransaction(async (conn) => {
+    const tenant = await loadTenant(conn, slug);
+    const [result] = await conn.execute<ResultSetHeader>(
+      `INSERT INTO tenant_contacts
+         (tenant_id, name, email, phone, role, is_primary, receive_invoices, receive_digests)
+       VALUES (?, ?, ?, ?, 'technical', 0, ?, ?)`,
+      [
+        tenant.id,
+        name,
+        email,
+        input.phone?.trim() || null,
+        input.receiveInvoices ? 1 : 0,
+        input.receiveDigests ? 1 : 0,
+      ],
+    );
+    await writeAuditLog(conn, {
+      actor,
+      action: "tenant_contact.create",
+      entityType: "tenant_contact",
+      entityId: Number(result.insertId),
+      after: {
+        slug,
+        name,
+        email,
+        receive_invoices: input.receiveInvoices ? 1 : 0,
+        receive_digests: input.receiveDigests ? 1 : 0,
+      },
+    });
+  });
 }
 
 export async function addAddon(
@@ -295,18 +849,21 @@ export async function addAddon(
     amountCents: number;
   },
   actor: string,
-): Promise<{ activeFrom: string }> {
+): Promise<{ activeFrom: string; draftsRebuilt: number }> {
   if (!Number.isInteger(input.amountCents) || input.amountCents === 0) {
     throw new Error("Addon amount must be a non-zero integer (cents)");
   }
   const activeFrom =
     input.kind === "recurring" ? firstDayOfNextMonth() : sastToday();
 
+  let tenantId = 0;
+
   await withTransaction(async (conn) => {
     const tenant = await loadTenant(conn, slug);
     if (tenant.status === "offboarded") {
       throw new Error("Cannot add addons to an offboarded tenant");
     }
+    tenantId = tenant.id;
 
     const [result] = await conn.execute<ResultSetHeader>(
       `INSERT INTO addons
@@ -337,18 +894,23 @@ export async function addAddon(
     });
   });
 
-  return { activeFrom };
+  const { rebuildTenantDraftInvoices } = await import("@/lib/invoices/generate");
+  const draftsRebuilt = await rebuildTenantDraftInvoices(tenantId, actor);
+
+  return { activeFrom, draftsRebuilt };
 }
 
 export async function removeAddon(
   slug: string,
   addonId: number,
   actor: string,
-): Promise<{ activeUntil: string | null }> {
+): Promise<{ activeUntil: string | null; draftsRebuilt: number }> {
   let activeUntil: string | null = null;
+  let tenantId = 0;
 
   await withTransaction(async (conn) => {
     const tenant = await loadTenant(conn, slug);
+    tenantId = tenant.id;
     const [rows] = await conn.execute<(RowDataPacket & {
       id: number;
       kind: "recurring" | "once_off";
@@ -400,35 +962,196 @@ export async function removeAddon(
     });
   });
 
-  return { activeUntil };
+  const { rebuildTenantDraftInvoices } = await import("@/lib/invoices/generate");
+  const draftsRebuilt = await rebuildTenantDraftInvoices(tenantId, actor);
+
+  return { activeUntil, draftsRebuilt };
 }
 
-export async function suspendTenant(slug: string, actor: string): Promise<void> {
-  await withTransaction(async (conn) => {
+export type SuspendOptions = {
+  reason: string;
+  /** Must match tenant slug exactly (typed confirmation). */
+  confirmSlug: string;
+};
+
+async function loadInfraForEnforce(
+  conn: PoolConnection,
+  tenantId: number,
+): Promise<{
+  primary_domain: string;
+  extra_domains: string[];
+  container_name: string;
+}> {
+  const [rows] = await conn.execute<
+    (RowDataPacket & {
+      primary_domain: string;
+      extra_domains: string | null;
+      container_name: string;
+    })[]
+  >(
+    `SELECT primary_domain, extra_domains, container_name
+     FROM tenant_infra WHERE tenant_id = ? LIMIT 1`,
+    [tenantId],
+  );
+  const row = rows[0];
+  if (!row) throw new Error("Tenant has no infra record — cannot enforce suspension");
+  let extra: string[] = [];
+  if (row.extra_domains) {
+    try {
+      const parsed = JSON.parse(
+        typeof row.extra_domains === "string"
+          ? row.extra_domains
+          : JSON.stringify(row.extra_domains),
+      );
+      if (Array.isArray(parsed)) extra = parsed.map(String);
+    } catch {
+      extra = [];
+    }
+  }
+  return {
+    primary_domain: row.primary_domain,
+    extra_domains: extra,
+    container_name: row.container_name,
+  };
+}
+
+/**
+ * Manually suspend a tenant: Caddy holding page (storefront only; /admin exempt),
+ * then status flag. Never stops containers. Billing continues.
+ */
+export async function suspendTenant(
+  slug: string,
+  actor: string,
+  opts: SuspendOptions,
+): Promise<void> {
+  const reason = opts.reason.trim();
+  if (!reason) throw new Error("Suspension reason is required");
+  if (opts.confirmSlug.trim() !== slug) {
+    throw new Error("Typed confirmation slug does not match");
+  }
+
+  const { enforceCaddySuspend, storefrontHosts } = await import(
+    "@/lib/caddy/enforce"
+  );
+
+  // Read-only prep outside the mutation window
+  const tenantRow = await withTransaction(async (conn) => {
     const tenant = await loadTenant(conn, slug);
     if (tenant.status !== "active") {
       throw new Error("Only active tenants can be suspended");
     }
-    await conn.execute(`UPDATE tenants SET status = 'suspended' WHERE id = ?`, [
-      tenant.id,
-    ]);
-    await writeAuditLog(conn, {
-      actor,
-      action: "tenant.suspend",
-      entityType: "tenant",
-      entityId: tenant.id,
-      before: { status: "active", slug },
-      after: {
-        status: "suspended",
-        slug,
-        tenant_id: tenant.id,
-        note: "Billing continues — dunning action, not offboarding",
-      },
-    });
+    const infra = await loadInfraForEnforce(conn, tenant.id);
+    return {
+      id: tenant.id,
+      slug: tenant.slug,
+      trading_name: tenant.trading_name,
+      infra,
+    };
   });
+
+  const caddy = await enforceCaddySuspend({
+    slug: tenantRow.slug,
+    tradingName: tenantRow.trading_name,
+    hosts: storefrontHosts(
+      tenantRow.infra.primary_domain,
+      tenantRow.infra.extra_domains,
+    ),
+    containerName: tenantRow.infra.container_name,
+    adminPaths: ["/admin*", "/api/admin*"],
+  });
+
+  try {
+    await withTransaction(async (conn) => {
+      const tenant = await loadTenant(conn, slug);
+      if (tenant.status !== "active") {
+        throw new Error("Only active tenants can be suspended");
+      }
+      await conn.execute(`UPDATE tenants SET status = 'suspended' WHERE id = ?`, [
+        tenant.id,
+      ]);
+      // Suppress paging: close open alerts; suspend is intentional.
+      await conn.execute(
+        `UPDATE alert_states
+         SET status = 'resolved', resolved_at = UTC_TIMESTAMP(3)
+         WHERE tenant_id = ? AND status = 'open'`,
+        [tenant.id],
+      );
+      await writeAuditLog(conn, {
+        actor,
+        action: "tenant.suspend",
+        entityType: "tenant",
+        entityId: tenant.id,
+        before: { status: "active", slug },
+        after: {
+          status: "suspended",
+          slug,
+          tenant_id: tenant.id,
+          reason,
+          caddy_route: caddy.routeId,
+          caddy_snapshot: caddy.snapshotPath,
+          note: "Billing continues — storefront held via Caddy; admin path exempt",
+        },
+      });
+    });
+  } catch (err) {
+    const { enforceCaddyUnsuspend, storefrontHosts: hostsFn } = await import(
+      "@/lib/caddy/enforce"
+    );
+    try {
+      await enforceCaddyUnsuspend({
+        slug: tenantRow.slug,
+        tradingName: tenantRow.trading_name,
+        hosts: hostsFn(
+          tenantRow.infra.primary_domain,
+          tenantRow.infra.extra_domains,
+        ),
+        containerName: tenantRow.infra.container_name,
+        adminPaths: ["/admin*", "/api/admin*"],
+      });
+    } catch (rollbackErr) {
+      console.error(
+        "[suspend] DB failed and Caddy rollback also failed:",
+        rollbackErr,
+      );
+    }
+    throw err;
+  }
 }
 
-export async function unsuspendTenant(slug: string, actor: string): Promise<void> {
+export async function unsuspendTenant(
+  slug: string,
+  actor: string,
+  opts?: { reason?: string; notify?: boolean },
+): Promise<void> {
+  const { enforceCaddyUnsuspend, storefrontHosts } = await import(
+    "@/lib/caddy/enforce"
+  );
+
+  const tenantRow = await withTransaction(async (conn) => {
+    const tenant = await loadTenant(conn, slug);
+    if (tenant.status !== "suspended") {
+      throw new Error("Only suspended tenants can be unsuspended");
+    }
+    const infra = await loadInfraForEnforce(conn, tenant.id);
+    return {
+      id: tenant.id,
+      slug: tenant.slug,
+      trading_name: tenant.trading_name,
+      infra,
+    };
+  });
+
+  const caddy = await enforceCaddyUnsuspend({
+    slug: tenantRow.slug,
+    tradingName: tenantRow.trading_name,
+    hosts: storefrontHosts(
+      tenantRow.infra.primary_domain,
+      tenantRow.infra.extra_domains,
+    ),
+    containerName: tenantRow.infra.container_name,
+    adminPaths: ["/admin*", "/api/admin*"],
+  });
+
   await withTransaction(async (conn) => {
     const tenant = await loadTenant(conn, slug);
     if (tenant.status !== "suspended") {
@@ -443,9 +1166,30 @@ export async function unsuspendTenant(slug: string, actor: string): Promise<void
       entityType: "tenant",
       entityId: tenant.id,
       before: { status: "suspended", slug },
-      after: { status: "active", slug, tenant_id: tenant.id },
+      after: {
+        status: "active",
+        slug,
+        tenant_id: tenant.id,
+        reason: opts?.reason ?? null,
+        caddy_route: caddy.routeId,
+        caddy_snapshot: caddy.snapshotPath,
+      },
     });
   });
+
+  if (opts?.notify) {
+    const { notifyAll } = await import("@/lib/notify");
+    await notifyAll({
+      subject: `[unsuspend] ${tenantRow.trading_name} (${tenantRow.slug}) is back online`,
+      body: [
+        `Tenant ${tenantRow.trading_name} (${tenantRow.slug}) was automatically unsuspended.`,
+        opts.reason ?? "Outstanding balance cleared.",
+        "Storefront holding page removed via Caddy.",
+      ].join("\n"),
+      severity: "info",
+      tenantSlug: tenantRow.slug,
+    });
+  }
 }
 
 export async function regenerateFleetSecret(

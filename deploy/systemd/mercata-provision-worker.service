@@ -1,0 +1,55 @@
+# Mercata Control — host-scoped provisioning worker
+#
+# One unit per application box. MERCATA_SERVER_ID in .env.worker must equal
+# that box's servers.id. The worker only claims jobs with matching
+# target_server_id — see ADD_SERVER_WORKER.md for bringing up a new box.
+#
+# Install (Caesar):
+#   sudo cp deploy/systemd/mercata-provision-worker.service /etc/systemd/system/
+#   # ensure .env.worker has MERCATA_SERVER_ID=<caesar id>
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now mercata-provision-worker
+#
+# Logs: journalctl -u mercata-provision-worker -f
+#
+# Prerequisites:
+#   1. mercata_control_db reachable from this host (e.g. 127.0.0.1:3307 on Caesar).
+#   2. EnvironmentFile sets DATABASE_URL + MERCATA_SERVER_ID + ENCRYPTION_KEY.
+#   3. Server row has deploy_path / db_host / db_port / public_ip filled in.
+#
+# Why systemd (not pm2): one unit with Restart=always and journald is enough.
+
+[Unit]
+Description=Mercata provisioning worker (host-scoped by MERCATA_SERVER_ID)
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=matthew
+Group=matthew
+WorkingDirectory=/home/matthew/caesar/control
+
+# Host-local env — keep secrets out of this unit file.
+# Must include MERCATA_SERVER_ID matching this box's servers.id.
+EnvironmentFile=-/home/matthew/caesar/control/.env.worker
+Environment=NODE_ENV=production
+Environment=PROVISION_WORKER_POLL_MS=5000
+Environment=PROVISION_WORKER_STALE_MINUTES=30
+
+ExecStart=/usr/bin/npx tsx workers/provision-worker.ts
+
+Restart=always
+RestartSec=5
+TimeoutStopSec=120
+KillSignal=SIGTERM
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mercata-provision-worker
+
+[Install]
+WantedBy=multi-user.target

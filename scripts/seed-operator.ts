@@ -32,8 +32,8 @@ async function main() {
     console.error("OPERATOR_EMAIL and OPERATOR_PASSWORD are required");
     process.exit(1);
   }
-  if (password.length < 12) {
-    console.error("OPERATOR_PASSWORD must be at least 12 characters");
+  if (password.length < 8) {
+    console.error("OPERATOR_PASSWORD must be at least 8 characters");
     process.exit(1);
   }
 
@@ -65,9 +65,12 @@ async function main() {
     let totpConfirmed = row.totp_confirmed ? 1 : 0;
     let showEnrolment = false;
 
-    if (rotateTotp || !row.totp_confirmed) {
+    if (rotateTotp) {
       secret = createTotpSecret();
       totpConfirmed = 0;
+      showEnrolment = true;
+    } else if (!row.totp_confirmed && !confirmTotp) {
+      // Keep existing unconfirmed secret; show enrolment again.
       showEnrolment = true;
     }
     if (confirmTotp) {

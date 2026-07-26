@@ -24,6 +24,10 @@ services:
       - ./deploy/mysql/init:/docker-entrypoint-initdb.d:ro
     networks:
       - control
+    # Host-only bind for the provisioning worker (systemd on Caesar).
+    # Not reachable from the public internet — loopback only.
+    ports:
+      - "127.0.0.1:3307:3306"
     healthcheck:
       test:
         [
@@ -34,7 +38,6 @@ services:
       timeout: 5s
       retries: 30
       start_period: 25s
-    # No ports: — internal only
 
   mercata_admin:
     build:
@@ -55,8 +58,11 @@ services:
       PORT: "3000"
       DATABASE_URL: mysql://mercata_admin:${MYSQL_PASSWORD}@mercata_control_db:3306/mercata_control
       APP_URL: https://admin.mercata.co.za
+      CADDY_ADMIN_URL: http://caddy:2019
     volumes:
       - mercata_control_invoices:/app/storage/invoices
+      - mercata_control_business_files:/app/storage/business-files
+      - mercata_control_caddy_snapshots:/app/storage/caddy-snapshots
     networks:
       - control
       - caddy_net
@@ -90,6 +96,10 @@ services:
       - ./migrations:/app/migrations:ro
       - ./scripts:/app/scripts:ro
       - ./src:/app/src:ro
+      - ./public:/app/public:ro
+      - ./assets:/app/assets:ro
+      - mercata_control_invoices:/app/storage/invoices
+      - mercata_control_business_files:/app/storage/business-files
     networks:
       - control
     depends_on:
@@ -100,6 +110,8 @@ services:
 volumes:
   mercata_control_mysql_data:
   mercata_control_invoices:
+  mercata_control_business_files:
+  mercata_control_caddy_snapshots:
 
 networks:
   control:

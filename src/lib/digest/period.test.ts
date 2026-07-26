@@ -6,7 +6,16 @@ import {
 } from "@/lib/digest/period";
 
 describe("digest periods", () => {
-  it("weekly covers prior 7 days ending yesterday", () => {
+  it("monthly covers previous calendar month", () => {
+    const { period, previous } = periodsForDigest("monthly", "2026-07-01");
+    expect(period.from).toBe("2026-06-01");
+    expect(period.to).toBe("2026-06-30");
+    expect(previous.from).toBe("2026-05-01");
+    expect(previous.to).toBe("2026-05-31");
+  });
+
+  it("weekly covers prior Mon–Sun before the send week's Monday", () => {
+    // 2026-07-13 is Monday → prior Mon–Sun is 6–12 Jul
     const { period, previous } = periodsForDigest("weekly", "2026-07-13");
     expect(period.from).toBe("2026-07-06");
     expect(period.to).toBe("2026-07-12");

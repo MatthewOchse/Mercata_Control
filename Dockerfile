@@ -71,7 +71,7 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 # Native modules used via serverExternalPackages
 COPY --from=builder /app/node_modules/argon2 ./node_modules/argon2
 
-RUN mkdir -p /app/storage/invoices \
+RUN mkdir -p /app/storage/invoices /app/storage/business-files /app/storage/caddy-snapshots \
   && chown -R nextjs:nodejs /app/storage
 
 USER nextjs

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useActionState, useState } from "react";
 import {
+  importOfxAction,
   recordPaymentAction,
   type PaymentActionState,
 } from "@/app/(console)/payments/actions";
@@ -15,18 +16,36 @@ const empty: PaymentActionState = {};
 export function PaymentsClient({
   payments,
   tenants,
+  gap,
 }: {
   payments: PaymentListRow[];
   tenants: { id: number; slug: string; trading_name: string }[];
+  gap: {
+    latestPeriodEnd: string | null;
+    gapDays: number | null;
+    warn: boolean;
+  } | null;
 }) {
   const [state, formAction, pending] = useActionState(
     recordPaymentAction,
+    empty,
+  );
+  const [importState, importAction, importPending] = useActionState(
+    importOfxAction,
     empty,
   );
   const [tenantId, setTenantId] = useState("");
 
   return (
     <div className="space-y-5">
+      {gap?.warn ? (
+        <div className="rounded-[4px] border border-status-warn bg-status-warn/10 p-3 text-[13px] text-status-warn">
+          {gap.latestPeriodEnd
+            ? `Statement gap: last OFX period ended ${gap.latestPeriodEnd} (${gap.gapDays}d ago). Import monthly — FNB drops older structured history.`
+            : "No OFX statements imported yet."}
+        </div>
+      ) : null}
+
       <section className="rounded-[4px] border border-border bg-surface p-4">
         <h2 className="mb-3 text-[13px] font-semibold">Record payment</h2>
         <form action={formAction} className="flex flex-wrap items-end gap-3">
@@ -56,10 +75,6 @@ export function PaymentsClient({
             >
               <option value="unallocated">Unallocated</option>
             </select>
-            <span className="text-[10px] text-muted">
-              Leave unallocated to assign later. Or open the invoice page to
-              allocate directly.
-            </span>
           </label>
           <label className="flex flex-col gap-1 text-[12px]">
             <span className="text-muted uppercase">Amount</span>
@@ -97,6 +112,7 @@ export function PaymentsClient({
             <span className="text-muted uppercase">Reference</span>
             <input
               name="reference"
+              placeholder="MER-2026-0007"
               className="h-8 w-40 rounded-[4px] border border-border px-2 font-mono text-[12px]"
             />
           </label>
@@ -116,25 +132,43 @@ export function PaymentsClient({
         ) : null}
       </section>
 
-      <section className="rounded-[4px] border border-dashed border-border bg-surface/50 p-4">
-        <h2 className="mb-1 text-[13px] font-semibold text-muted">
-          Bank statement CSV import
-        </h2>
-        <p className="text-[12px] text-muted">
-          Stubbed for later — fuzzy matching on reference against open invoices.
-          Interface lives in{" "}
-          <code className="font-mono text-[11px]">
-            lib/payments/bank-import.ts
-          </code>
+      <section className="rounded-[4px] border border-border bg-surface p-4">
+        <h2 className="mb-1 text-[13px] font-semibold">Import FNB statement</h2>
+        <p className="mb-3 text-[12px] text-muted">
+          OFX only (FITID dedup). Manual upload — no scraping.{" "}
+          <Link
+            href="/payments/reconcile"
+            className="text-accent-strong hover:underline"
+          >
+            Review unmatched credits
+          </Link>
           .
         </p>
-        <button
-          type="button"
-          disabled
-          className="mt-2 h-8 cursor-not-allowed rounded-[4px] border border-border px-3 text-[12px] text-muted opacity-60"
-        >
-          Import CSV (coming later)
-        </button>
+        <form action={importAction} className="flex flex-wrap items-end gap-2">
+          <label className="flex flex-col gap-1 text-[12px]">
+            <span className="text-muted uppercase">OFX file</span>
+            <input
+              type="file"
+              name="statement"
+              accept=".ofx,.OFX,.ofc,.OFC"
+              required
+              className="text-[12px]"
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={importPending}
+            className="h-8 rounded-[4px] border border-border px-3 text-[12px] font-semibold hover:border-primary-light hover:bg-primary hover:text-white disabled:opacity-60"
+          >
+            Import statement
+          </button>
+        </form>
+        {importState.error ? (
+          <p className="mt-2 text-[12px] text-status-error">{importState.error}</p>
+        ) : null}
+        {importState.message ? (
+          <p className="mt-2 text-[12px] text-status-ok">{importState.message}</p>
+        ) : null}
       </section>
 
       <table className="admin-table">
@@ -152,7 +186,7 @@ export function PaymentsClient({
           {payments.length === 0 ? (
             <tr>
               <td colSpan={6} className="text-muted">
-                No payments yet.
+                No payments yet
               </td>
             </tr>
           ) : (
@@ -171,16 +205,16 @@ export function PaymentsClient({
                   {p.invoice_id && p.invoice_number ? (
                     <Link
                       href={`/invoices/${p.invoice_id}`}
-                      className="text-accent-strong"
+                      className="text-accent-strong hover:underline"
                     >
                       {p.invoice_number}
                     </Link>
                   ) : (
-                    <span className="text-status-warn">Unallocated</span>
+                    <span className="text-muted">unallocated</span>
                   )}
                 </td>
                 <td>{p.method}</td>
-                <td className="font-mono text-[11px]">{p.reference ?? "—"}</td>
+                <td className="font-mono text-[12px]">{p.reference ?? "—"}</td>
                 <td className="text-right">
                   <Money cents={p.amount_cents} />
                 </td>

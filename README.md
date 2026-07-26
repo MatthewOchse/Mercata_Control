@@ -12,7 +12,7 @@ There is **no public signup** and **no customer-facing login**.
 | Decision | Setting | Why |
 |---|---|---|
 | VAT registered? | `VAT_REGISTERED=false` (change if/when you register) | If false, invoices show no VAT line and must not use the words "Tax Invoice". If true, they need your VAT number, 15% line, and the title "Tax Invoice". |
-| Billing timing | In advance, on the 1st, for the month ahead | Never chasing money for service already delivered. |
+| Billing timing | In advance; signup month invoiced on Activate; default billing day **1** (editable 1–28) | Full month for signup month (no pro-rata). Due date follows billing day. |
 | Mid-cycle plan changes | No pro-rata. Changes take effect on the next cycle. | Pro-rata arithmetic is a bug farm. Revisit at ~20 tenants. |
 
 ## Invoice invariants
@@ -34,7 +34,7 @@ Run invariant tests: `npm test`
 
 ## Billing ops
 
-- Issue emails PDF via Resend from `accounts@mercata.co.za` (`INVOICE_EMAIL_FROM`); failures leave `sent_at` null and surface on the dashboard.
+- Issue emails PDF via Resend from `billings@mercata.co.za` (`INVOICE_EMAIL_FROM`); failures leave `sent_at` null and surface on the dashboard.
 - Payments: allocate to invoice or leave unallocated; auto-paid when allocations cover total.
 - Dunning: `GET /api/cron/dunning` daily 08:00 SAST — reminders logged once per stage; +21 days creates a manual suspension task (never auto-suspends).
 - Bank CSV import: stub only (`lib/payments/bank-import.ts`).
@@ -95,6 +95,17 @@ Open http://localhost:3000 — you will be redirected to `/login`.
 | `npm run dev` | Next.js dev server |
 | `npm run db:migrate` | Apply pending `migrations/*.sql` |
 | `npm run seed:tenants` | Idempotent seed for crafties + geist (active) |
+
+## Provisioning worker (host-scoped)
+
+Each application box runs one worker with `MERCATA_SERVER_ID=<servers.id>`.
+It only claims jobs where `provisioning_jobs.target_server_id` matches.
+
+- **New host end-to-end:** [`NEW_SERVER_RUNBOOK.md`](./NEW_SERVER_RUNBOOK.md)
+- Caesar unit: `deploy/systemd/mercata-provision-worker.service`
+- Env template: `deploy/systemd/env.worker.example` (set `MERCATA_SERVER_ID`)
+- Worker-only notes: `deploy/systemd/ADD_SERVER_WORKER.md`
+- Helpers: `npm run register:server`, `npm run smoke:server`
 
 ## Design surfaces
 

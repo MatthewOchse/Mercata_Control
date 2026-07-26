@@ -13,6 +13,11 @@ export function totpUri(secret: string, email: string): string {
 }
 
 export function verifyTotp(secret: string, token: string): boolean {
-  const result = verifySync({ secret, token: token.trim() });
+  // ±1 step (30s) tolerance for phone clock skew
+  const result = verifySync({
+    secret,
+    token: token.trim().replace(/\s+/g, ""),
+    epochTolerance: 30,
+  });
   return result.valid === true;
 }

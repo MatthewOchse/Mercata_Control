@@ -1,4 +1,4 @@
-export type DigestCadence = "daily" | "weekly" | "off";
+export type DigestCadence = "daily" | "weekly" | "monthly" | "off";
 
 export type SalesMetrics = {
   ordersCount: number;
@@ -6,6 +6,10 @@ export type SalesMetrics = {
   refundsCents: number;
   netSalesCents: number;
   averageOrderValueCents: number;
+  /** Paid event bookings included in gross/net (null when the fleet build is older). */
+  eventsBookingsCount: number | null;
+  eventsGrossCents: number | null;
+  eventsSpaces: number | null;
   topProducts: Array<{
     description: string;
     units: number;
@@ -38,12 +42,16 @@ export type DigestPayload = {
   tenantId: number;
   slug: string;
   brand: DigestBrand;
-  cadence: "daily" | "weekly";
+  cadence: "daily" | "weekly" | "monthly";
   period: PeriodWindow;
   previous: PeriodWindow;
   sales: SalesMetrics;
   previousSales: SalesMetrics;
   traffic: TrafficMetrics | null;
+  /** orders/sessions * 100 when traffic present; omit when unknown */
+  conversionRate: number | null;
+  contextLine: string | null;
+  showSettleNote: boolean;
   unsubscribeUrl: string;
 };
 
