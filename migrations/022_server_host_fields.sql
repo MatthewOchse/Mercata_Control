@@ -31,10 +31,10 @@ INSERT INTO servers (
   '165.49.25.59',
   '127.0.0.1',
   3306,
-  '/home/matthew/caesar/fleet',
+  '/home/matthew/caesar/sites/web',
   14,
   1,
-  'Caesar — existing primary box. Host values for future multi-server provision.'
+  'Caesar — primary box. Live compose/Caddy/tenants via FLEET_DEPLOY_DIR=/home/matthew/caesar/fleet.'
 )
 ON DUPLICATE KEY UPDATE
   label       = VALUES(label),

@@ -29,9 +29,10 @@ export const CAESAR_SERVER_SEED = {
   publicIp: "165.49.25.59",
   dbHost: "127.0.0.1",
   dbPort: 3306,
-  deployPath: "/home/matthew/caesar/fleet",
+  /** Storefront repo root (package.json / tenant:provision). */
+  deployPath: "/home/matthew/caesar/sites/web",
   capacity: 14,
   active: true,
   notes:
-    "Caesar — existing primary box. Host values for future multi-server provision.",
+    "Caesar — primary box. Live compose/Caddy/tenants: FLEET_DEPLOY_DIR=/home/matthew/caesar/fleet.",
 } as const satisfies Omit<Server, "id" | "createdAt" | "updatedAt">;

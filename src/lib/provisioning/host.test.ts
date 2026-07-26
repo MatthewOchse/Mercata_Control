@@ -7,11 +7,15 @@ import { CAESAR_SERVER_SEED, type Server } from "@/lib/servers/types";
 
 describe("resolveProvisionHost (Caesar parity)", () => {
   it("matches Prompt-0 hardcoded Caesar values byte-for-byte", () => {
+    const prev = process.env.FLEET_DEPLOY_DIR;
+    process.env.FLEET_DEPLOY_DIR = "/home/matthew/caesar/fleet";
     const caesar: Server = {
       id: 1,
       ...CAESAR_SERVER_SEED,
     };
     const resolved = resolveProvisionHost(caesar);
+    if (prev === undefined) delete process.env.FLEET_DEPLOY_DIR;
+    else process.env.FLEET_DEPLOY_DIR = prev;
 
     expect(resolved.fleetRepoRoot).toBe(CAESAR_LEGACY_HARDCODED.fleetRepoRoot);
     expect(resolved.deployRoot).toBe(CAESAR_LEGACY_HARDCODED.deployRoot);

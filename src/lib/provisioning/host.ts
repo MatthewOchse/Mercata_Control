@@ -40,18 +40,17 @@ export type ProvisionHostTarget = {
   containerMysqlHost: string;
 };
 
+/** Caesar live layout (repo + FLEET_DEPLOY_DIR sibling fleet tree). */
+export const CAESAR_FLEET_DEPLOY_DIR = "/home/matthew/caesar/fleet";
+
 /** Values the routine used for Caesar before Server lookup (Prompt 0). */
 export const CAESAR_LEGACY_HARDCODED = {
   fleetRepoRoot: CAESAR_SERVER_SEED.deployPath,
-  deployRoot: path.join(CAESAR_SERVER_SEED.deployPath, "deploy"),
-  composeFile: path.join(
-    CAESAR_SERVER_SEED.deployPath,
-    "deploy",
-    "docker-compose.fleet.yml",
-  ),
-  composeCwd: path.join(CAESAR_SERVER_SEED.deployPath, "deploy"),
-  caddyFile: path.join(CAESAR_SERVER_SEED.deployPath, "deploy", "Caddyfile"),
-  assetsHostPath: path.join(CAESAR_SERVER_SEED.deployPath, "deploy", "tenants"),
+  deployRoot: CAESAR_FLEET_DEPLOY_DIR,
+  composeFile: path.join(CAESAR_FLEET_DEPLOY_DIR, "docker-compose.fleet.yml"),
+  composeCwd: CAESAR_FLEET_DEPLOY_DIR,
+  caddyFile: path.join(CAESAR_FLEET_DEPLOY_DIR, "Caddyfile"),
+  assetsHostPath: path.join(CAESAR_FLEET_DEPLOY_DIR, "tenants"),
   provisionDbHost: "127.0.0.1",
   provisionDbPort: 3306,
   publicIp: CAESAR_SERVER_SEED.publicIp,
@@ -78,7 +77,11 @@ export function resolveProvisionHost(server: Server): ProvisionHostTarget {
     throw new Error(`Server "${server.name}" (#${server.id}) has no public_ip`);
   }
 
-  const deployRoot = path.join(deployPath, "deploy");
+  // Storefront writes compose/Caddy/tenants under {repo}/deploy by default.
+  // Caesar's live compose project is a sibling tree (~/caesar/fleet) — set
+  // FLEET_DEPLOY_DIR (and usually FLEET_APP_ROOT=deploy_path) on the worker.
+  const fleetDeployDir = process.env.FLEET_DEPLOY_DIR?.trim();
+  const deployRoot = fleetDeployDir || path.join(deployPath, "deploy");
   const composeFile = path.join(deployRoot, "docker-compose.fleet.yml");
 
   return {
