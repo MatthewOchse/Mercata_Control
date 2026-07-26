@@ -15,6 +15,13 @@ central; each box runs a **host-scoped** provision worker.
 
 Related: `deploy/systemd/ADD_SERVER_WORKER.md` (worker-only excerpt).
 
+**Caesar note:** the storefront checkout is `~/caesar/sites/web` while the
+live compose/Caddy/tenants project is the sibling `~/caesar/fleet`. Set
+`servers.deploy_path` to the checkout root and put
+`FLEET_DEPLOY_DIR=/home/matthew/caesar/fleet` (plus `FLEET_APP_ROOT` to the
+checkout) in `.env.worker`. New boxes should keep a single tree
+(`{deploy_path}/deploy/...`) and can omit those env vars.
+
 ---
 
 ## 0. Naming and addresses
