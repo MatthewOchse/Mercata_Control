@@ -7,8 +7,17 @@ import {
   type ProvisionActionState,
 } from "@/app/(console)/tenants/provision-actions";
 import type { ServerFillOption } from "@/lib/servers/assign";
+import { platformTierForPlan } from "@/lib/plans/tier-map";
+import { formatZAR } from "@/lib/money";
 
 const initial: ProvisionActionState = {};
+
+export type PlanOption = {
+  code: string;
+  name: string;
+  monthly_cents: number;
+  product_line: string;
+};
 
 function generateStrongPassword(): string {
   const alphabet =
@@ -23,9 +32,11 @@ function generateStrongPassword(): string {
 export function ProvisionTenantForm({
   servers,
   autoPickId,
+  plans,
 }: {
   servers: ServerFillOption[];
   autoPickId: number | null;
+  plans: PlanOption[];
 }) {
   const [state, formAction, pending] = useActionState(
     enqueueProvisionJobAction,
@@ -41,6 +52,11 @@ export function ProvisionTenantForm({
   const [showPw, setShowPw] = useState(false);
   const [targetSelection, setTargetSelection] = useState<string>("auto");
   const [forceOverCapacity, setForceOverCapacity] = useState(false);
+  const [planCode, setPlanCode] = useState(plans[0]?.code ?? "online");
+  const [tierOverride, setTierOverride] = useState(false);
+  const [tier, setTier] = useState<"online" | "retail">(
+    platformTierForPlan(plans[0]?.code ?? "online"),
+  );
 
   const activeServers = useMemo(
     () => servers.filter((s) => s.active && s.capacity > 0),
@@ -87,6 +103,10 @@ export function ProvisionTenantForm({
     if (!emailTouched) setAdminEmail(suggestedEmail);
   }, [suggestedEmail, emailTouched]);
 
+  useEffect(() => {
+    if (!tierOverride) setTier(platformTierForPlan(planCode));
+  }, [planCode, tierOverride]);
+
   return (
     <form action={formAction} className="max-w-2xl space-y-5" autoComplete="off">
       <section className="rounded-[4px] border border-border bg-surface p-4">
@@ -106,7 +126,7 @@ export function ProvisionTenantForm({
               placeholder="acme"
             />
             <span className="text-[11px] text-muted">
-              lowercase letter, then [a-z0-9-]
+              lowercase letter, then [a-z0-9-] · becomes TENANT_ID
             </span>
           </label>
           <Field label="Display name" name="display_name" required />
@@ -122,20 +142,53 @@ export function ProvisionTenantForm({
               className="h-9 rounded-[4px] border border-border bg-surface px-3 font-mono text-[13px]"
               placeholder="shop.acme.co.za"
             />
+            <span className="text-[11px] text-muted">
+              Sets AUTH_URL / NEXTAUTH_URL / NEXT_PUBLIC_APP_URL to https://…
+            </span>
+          </label>
+          <label className="flex flex-col gap-1 sm:col-span-2">
+            <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">
+              Billing plan
+            </span>
+            <select
+              name="plan_code"
+              required
+              value={planCode}
+              onChange={(e) => setPlanCode(e.target.value)}
+              className="h-9 rounded-[4px] border border-border bg-surface px-3 text-[13px]"
+            >
+              {plans.map((p) => (
+                <option key={p.code} value={p.code}>
+                  {p.name} — {formatZAR(p.monthly_cents)}/mo
+                  {p.product_line === "sites" ? " (sites)" : ""}
+                </option>
+              ))}
+            </select>
+            <span className="text-[11px] text-muted">
+              All active catalog plans. CRM subscription is created on success.
+            </span>
           </label>
           <label className="flex flex-col gap-1">
             <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">
-              Tier
+              Platform tier (features)
             </span>
             <select
               name="tier"
               required
-              defaultValue="online"
+              value={tier}
+              onChange={(e) => {
+                setTierOverride(true);
+                setTier(e.target.value as "online" | "retail");
+              }}
               className="h-9 rounded-[4px] border border-border bg-surface px-3 text-[13px]"
             >
-              <option value="online">Online</option>
-              <option value="retail">Retail</option>
+              <option value="online">Online — shop / cart / checkout</option>
+              <option value="retail">Retail — online + POS / stock take</option>
             </select>
+            <span className="text-[11px] text-muted">
+              Storefront feature set (TENANT_TIER). Defaults from billing plan;
+              override if needed.
+            </span>
           </label>
           <label className="flex flex-col gap-1">
             <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">
@@ -153,7 +206,7 @@ export function ProvisionTenantForm({
               className="h-9 rounded-[4px] border border-border bg-surface px-3 font-mono text-[13px]"
             />
             <span className="text-[11px] text-muted">
-              Auto-suggests storedb_&lt;id&gt;
+              MYSQL_DATABASE · auto storedb_&lt;id&gt;
             </span>
           </label>
         </div>
@@ -261,8 +314,8 @@ export function ProvisionTenantForm({
         <h2 className="mb-3 text-[13px] font-semibold">Admin account</h2>
         <p className="mb-3 text-[12px] text-muted">
           Storefront admin user created during provision. Password is encrypted
-          for one-time hand-off to the host worker — never stored in plaintext
-          and never shown again after submit.
+          for one-time hand-off — never stored in plaintext and never shown
+          again after submit.
         </p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="flex flex-col gap-1 sm:col-span-2">
@@ -315,34 +368,63 @@ export function ProvisionTenantForm({
         </div>
       </section>
 
+      <section className="rounded-[4px] border border-border bg-surface p-4">
+        <h2 className="mb-1 text-[13px] font-semibold">MySQL (tenant DB)</h2>
+        <p className="mb-3 text-[12px] text-muted">
+          All tenants on a host share the same MySQL instance and port (
+          <span className="font-mono">3306</span>). Only database name / user
+          differ. Leave blanks to use host defaults (
+          <span className="font-mono">host.docker.internal:3306</span> +
+          provision worker root creds).
+        </p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field
+            label="MYSQL_HOST"
+            name="mysql_host"
+            mono
+            placeholder="host.docker.internal"
+          />
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">
+              MYSQL_PORT
+            </span>
+            <input
+              name="mysql_port"
+              defaultValue="3306"
+              inputMode="numeric"
+              pattern="[0-9]{2,5}"
+              className="h-9 rounded-[4px] border border-border bg-surface px-3 font-mono text-[13px]"
+            />
+            <span className="text-[11px] text-muted">
+              Same for every tenant on this box
+            </span>
+          </label>
+          <Field label="MYSQL_USER" name="mysql_user" mono placeholder="root" />
+          <Field
+            label="MYSQL_PASSWORD"
+            name="mysql_password"
+            type="password"
+          />
+        </div>
+      </section>
+
       <section className="rounded-[4px] border border-status-warn/40 bg-status-warn/8 p-4">
         <h2 className="mb-1 text-[13px] font-semibold">External secrets</h2>
         <p className="mb-3 text-[12px] text-foreground/80">
-          Optional now — can be filled later in Store Management / the tenant{" "}
-          <code className="font-mono text-[11px]">.env</code>. These values are
-          written <strong>only</strong> to the tenant&apos;s{" "}
+          Written only to the tenant{" "}
           <code className="font-mono text-[11px]">.env</code> on the host after
-          decrypt. They are never stored in plaintext in the admin database.
+          decrypt. Leave blank to fill later in Store Management. Never stored
+          in plaintext in Control.
         </p>
-
-        <h3 className="mb-2 text-[12px] font-semibold text-muted uppercase tracking-wide">
-          Database (if not using host defaults)
-        </h3>
-        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="MySQL host" name="mysql_host" mono />
-          <Field label="MySQL port" name="mysql_port" mono placeholder="3306" />
-          <Field label="MySQL user" name="mysql_user" mono />
-          <Field label="MySQL password" name="mysql_password" type="password" />
-        </div>
 
         <h3 className="mb-2 text-[12px] font-semibold text-muted uppercase tracking-wide">
           PayFast
         </h3>
         <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Merchant id" name="payfast_merchant_id" mono />
-          <Field label="Merchant key" name="payfast_merchant_key" mono />
+          <Field label="PAYFAST_MERCHANT_ID" name="payfast_merchant_id" mono />
+          <Field label="PAYFAST_MERCHANT_KEY" name="payfast_merchant_key" mono />
           <Field
-            label="Passphrase"
+            label="PAYFAST_PASSPHRASE"
             name="payfast_passphrase"
             type="password"
             className="sm:col-span-2"
@@ -357,8 +439,12 @@ export function ProvisionTenantForm({
           ShipLogic / Courier Guy
         </h3>
         <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Base URL" name="shiplogic_base_url" mono />
-          <Field label="API key" name="shiplogic_api_key" type="password" />
+          <Field label="SHIPLOGIC_BASE_URL" name="shiplogic_base_url" mono />
+          <Field
+            label="SHIPLOGIC_API_KEY"
+            name="shiplogic_api_key"
+            type="password"
+          />
           <label className="flex flex-col gap-1 sm:col-span-2">
             <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">
               Collection JSON
@@ -379,7 +465,7 @@ export function ProvisionTenantForm({
         <h3 className="mb-2 text-[12px] font-semibold text-muted uppercase tracking-wide">
           PUDO / TCG Locker
         </h3>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field
             label="TCG_LOCKER_API_KEY"
             name="tcg_locker_api_key"
@@ -392,13 +478,50 @@ export function ProvisionTenantForm({
             placeholder="65.00"
           />
         </div>
+
+        <h3 className="mb-2 text-[12px] font-semibold text-muted uppercase tracking-wide">
+          SMTP (Resend / other)
+        </h3>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field
+            label="SMTP_HOST"
+            name="smtp_host"
+            mono
+            placeholder="smtp.resend.com"
+          />
+          <Field
+            label="SMTP_PORT"
+            name="smtp_port"
+            mono
+            placeholder="465"
+            defaultValue="465"
+          />
+          <Field
+            label="SMTP_USER"
+            name="smtp_user"
+            mono
+            placeholder="resend"
+          />
+          <Field label="SMTP_PASS" name="smtp_pass" type="password" />
+        </div>
       </section>
 
-      <p className="text-[12px] text-muted">
-        Internal secrets (AUTH_SECRET, STORE_ADMIN_SECRET, FLEET_SECRET) are{" "}
-        <strong>not</strong> collected here — the target host worker generates
-        them with openssl.
-      </p>
+      <section className="rounded-[4px] border border-border bg-background p-4">
+        <h2 className="mb-2 text-[13px] font-semibold">Auto-generated on host</h2>
+        <p className="text-[12px] text-muted">
+          Not collected here (worker generates with openssl):{" "}
+          <span className="font-mono">AUTH_SECRET</span>,{" "}
+          <span className="font-mono">STORE_ADMIN_SECRET</span>,{" "}
+          <span className="font-mono">FLEET_SECRET</span>. Also set from
+          identity:{" "}
+          <span className="font-mono">TENANT_ID</span>,{" "}
+          <span className="font-mono">TENANT_TIER</span>,{" "}
+          <span className="font-mono">TENANT_FEATURES</span>,{" "}
+          <span className="font-mono">AUTH_URL</span> /{" "}
+          <span className="font-mono">NEXTAUTH_URL</span> /{" "}
+          <span className="font-mono">NEXT_PUBLIC_APP_URL</span>.
+        </p>
+      </section>
 
       {state.error ? (
         <p className="rounded-[4px] border border-status-error/30 bg-status-error/8 px-3 py-2 text-[12px] text-status-error">
@@ -413,7 +536,8 @@ export function ProvisionTenantForm({
             pending ||
             !adminPassword ||
             blockSubmit ||
-            activeServers.length === 0
+            activeServers.length === 0 ||
+            plans.length === 0
           }
           className="h-9 rounded-[4px] bg-accent-strong px-4 text-[13px] font-semibold text-white disabled:opacity-60"
         >
@@ -437,6 +561,7 @@ function Field({
   type = "text",
   mono,
   placeholder,
+  defaultValue,
   className = "",
 }: {
   label: string;
@@ -445,6 +570,7 @@ function Field({
   type?: string;
   mono?: boolean;
   placeholder?: string;
+  defaultValue?: string;
   className?: string;
 }) {
   return (
@@ -457,6 +583,7 @@ function Field({
         type={type}
         required={required}
         placeholder={placeholder}
+        defaultValue={defaultValue}
         autoComplete="off"
         className={`h-9 rounded-[4px] border border-border bg-surface px-3 text-[13px] outline-none focus:border-accent-strong ${mono ? "font-mono" : ""}`}
       />

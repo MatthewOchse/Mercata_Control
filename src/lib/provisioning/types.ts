@@ -20,6 +20,8 @@ export type ProvisioningNonSensitiveConfig = {
   /** Target box name (matches servers.name), e.g. caesar — informational. */
   host?: string;
   adminUsername?: string;
+  /** Billing plan code (plans.code) — CRM subscription after success. */
+  planCode?: string;
   /** When true, worker skips fleet:generate (operator will run it). */
   skipDeployGenerate?: boolean;
   notes?: string;

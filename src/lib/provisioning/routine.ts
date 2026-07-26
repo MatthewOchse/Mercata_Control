@@ -445,7 +445,7 @@ async function stepAssembleEnv(
   // Pass through operator external secrets (PayFast, SMTP, …) by env key name.
   for (const [key, value] of Object.entries(external)) {
     if (!value?.trim()) continue;
-    if (key === "ADMIN_PASSWORD") continue; // never put admin password in container .env
+    if (key === "ADMIN_PASSWORD" || key === "ADMIN_EMAIL") continue;
     if (key in values && values[key]) continue; // prefer already set
     values[key] = value.trim();
   }
@@ -778,10 +778,14 @@ export async function runProvisionRoutine(
         serverId: ctx.host.serverId,
         serverName: ctx.host.serverName,
         fleetSecretPlain: internal.FLEET_SECRET,
+        planCode: ctx.job.non_sensitive_config?.planCode,
       });
       await ctx.log(
         `CRM placement: tenant #${placed.tenantId} → server ${ctx.host.serverName} (#${ctx.host.serverId})` +
-          (placed.created ? " (created)" : " (updated)"),
+          (placed.created ? " (created)" : " (updated)") +
+          (ctx.job.non_sensitive_config?.planCode
+            ? ` plan=${ctx.job.non_sensitive_config.planCode}`
+            : ""),
       );
       await ctx.log(
         `DNS guidance: point A/AAAA for ${ctx.job.domain} → ${ctx.host.publicIp}`,

@@ -12,6 +12,8 @@ import { assertProvisionCollisions } from "@/lib/provisioning/collisions";
 import { auditProvision } from "@/lib/provisioning/audit";
 import { listServerFillOptions } from "@/lib/servers/queries";
 import { resolveTargetServerSelection } from "@/lib/servers/assign";
+import { getPlan } from "@/lib/plans/queries";
+import { platformTierForPlan } from "@/lib/plans/tier-map";
 import type { ProvisioningTier } from "@/lib/provisioning/types";
 
 export type ProvisionActionState = {
@@ -50,15 +52,27 @@ export async function enqueueProvisionJobAction(
       .toLowerCase()
       .replace(/^https?:\/\//, "")
       .replace(/\/$/, "");
-    const tier = formStr(formData, "tier") as ProvisioningTier;
+    const planCode = formStr(formData, "plan_code");
+    const tierRaw = formStr(formData, "tier");
     const dbName = formStr(formData, "db_name");
     const adminEmail =
       formStr(formData, "admin_email") || `admin@${domain}`;
     const adminPassword = formStr(formData, "admin_password");
 
     if (!displayName) throw new Error("Display name is required");
+    if (!planCode) throw new Error("Billing plan is required");
+    const plan = await getPlan(planCode);
+    if (!plan || !plan.active) {
+      throw new Error(`Unknown or inactive plan "${planCode}"`);
+    }
+
+    const tier = (
+      tierRaw === "online" || tierRaw === "retail"
+        ? tierRaw
+        : platformTierForPlan(planCode)
+    ) as ProvisioningTier;
     if (tier !== "online" && tier !== "retail") {
-      throw new Error("Tier must be online or retail");
+      throw new Error("Platform tier must be online or retail");
     }
     if (!/^[A-Za-z0-9_]{1,64}$/.test(dbName)) {
       throw new Error("DB name must be 1–64 characters [A-Za-z0-9_]");
@@ -88,11 +102,13 @@ export async function enqueueProvisionJobAction(
       );
     }
 
+    const mysqlPort = optionalSecret(formData, "mysql_port") || "3306";
+
     const payload: ExternalSecretPayload = {
       ADMIN_PASSWORD: adminPassword,
       ADMIN_EMAIL: adminEmail,
       MYSQL_HOST: optionalSecret(formData, "mysql_host"),
-      MYSQL_PORT: optionalSecret(formData, "mysql_port"),
+      MYSQL_PORT: mysqlPort,
       MYSQL_USER: optionalSecret(formData, "mysql_user"),
       MYSQL_PASSWORD: optionalSecret(formData, "mysql_password"),
       PAYFAST_MERCHANT_ID: optionalSecret(formData, "payfast_merchant_id"),
@@ -113,6 +129,10 @@ export async function enqueueProvisionJobAction(
         formData,
         "pudo_shipping_amount",
       ),
+      SMTP_HOST: optionalSecret(formData, "smtp_host"),
+      SMTP_PORT: optionalSecret(formData, "smtp_port"),
+      SMTP_USER: optionalSecret(formData, "smtp_user"),
+      SMTP_PASS: optionalSecret(formData, "smtp_pass"),
     };
 
     for (const key of Object.keys(payload)) {
@@ -120,6 +140,8 @@ export async function enqueueProvisionJobAction(
     }
     payload.ADMIN_PASSWORD = adminPassword;
     payload.ADMIN_EMAIL = adminEmail;
+    // Port is always present — shared host MySQL (default 3306).
+    payload.MYSQL_PORT = mysqlPort;
 
     const jobId = await enqueueProvisioningJob({
       tenantId,
@@ -132,6 +154,7 @@ export async function enqueueProvisionJobAction(
         displayName,
         adminUsername: adminEmail,
         host: server.name,
+        planCode: plan.code,
       },
     });
 
@@ -145,12 +168,14 @@ export async function enqueueProvisionJobAction(
       after: {
         domain,
         tier,
+        planCode: plan.code,
         dbName,
         displayName,
         targetServerId: server.id,
         serverName: server.name,
         assignMode: resolved.mode,
         publicIp: server.publicIp,
+        mysqlPort,
         secretKeys: Object.keys(payload).filter((k) => k !== "ADMIN_PASSWORD"),
         hasAdminPassword: true,
       },

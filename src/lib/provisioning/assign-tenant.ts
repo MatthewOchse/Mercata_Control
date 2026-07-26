@@ -15,6 +15,8 @@ export async function assignTenantToServer(opts: {
   serverId: number;
   serverName: string;
   fleetSecretPlain: string;
+  /** Billing plan to attach when creating/activating CRM tenant. */
+  planCode?: string | null;
 }): Promise<{ tenantId: number; created: boolean }> {
   const slug = opts.tenantSlug.trim().toLowerCase();
   const domain = opts.domain.trim().toLowerCase();
@@ -22,6 +24,7 @@ export async function assignTenantToServer(opts: {
     opts.displayName?.trim() ||
     slug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
   const fleetCipher = encryptSecret(opts.fleetSecretPlain);
+  const planCode = opts.planCode?.trim() || null;
 
   return withTransaction(async (conn) => {
     const [existing] = await conn.execute<(RowDataPacket & { id: number })[]>(
@@ -75,6 +78,35 @@ export async function assignTenantToServer(opts: {
          VALUES (?, ?, NULL, ?, ?, ?, ?)`,
         [tenantId, domain, slug, opts.dbName, opts.serverName, fleetCipher],
       );
+    }
+
+    if (planCode) {
+      const [planRows] = await conn.execute<
+        (RowDataPacket & { monthly_cents: number })[]
+      >(`SELECT monthly_cents FROM plans WHERE code = ? AND active = 1 LIMIT 1`, [
+        planCode,
+      ]);
+      const monthly = planRows[0] ? Number(planRows[0].monthly_cents) : 0;
+      const [subs] = await conn.execute<(RowDataPacket & { id: number })[]>(
+        `SELECT id FROM subscriptions
+         WHERE tenant_id = ? AND status = 'active' AND ends_on IS NULL
+         ORDER BY id DESC LIMIT 1`,
+        [tenantId],
+      );
+      if (subs[0]) {
+        await conn.execute(
+          `UPDATE subscriptions SET plan_code = ?, current_monthly_cents = ?
+           WHERE id = ?`,
+          [planCode, monthly, Number(subs[0].id)],
+        );
+      } else {
+        await conn.execute(
+          `INSERT INTO subscriptions
+             (tenant_id, plan_code, status, started_on, ends_on, current_monthly_cents)
+           VALUES (?, ?, 'active', CURDATE(), NULL, ?)`,
+          [tenantId, planCode, monthly],
+        );
+      }
     }
 
     return { tenantId, created };
