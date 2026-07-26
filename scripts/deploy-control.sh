@@ -24,26 +24,9 @@ DB="${MYSQL_DATABASE:-mercata_control}"
 docker compose exec -T -e MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mercata_control_db \
   mysql -uroot -e "GRANT ALL PRIVILEGES ON \`${DB}\`.* TO '${APP_USER}'@'%'; FLUSH PRIVILEGES;"
 docker compose --profile tools run --rm migrate
-# Re-grant per table after migrations (new tables are not covered until this runs).
+# Re-lock app user to per-table DML (audit_log = SELECT+INSERT only).
 # Do not `source .env` — JSON secrets (e.g. GOOGLE_SERVICE_ACCOUNT_JSON) break bash.
-docker compose exec -T -e MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mercata_control_db \
-  mysql -uroot -e "REVOKE ALL PRIVILEGES, GRANT OPTION FROM '${APP_USER}'@'%';" || true
-docker compose exec -T -e MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mercata_control_db \
-  mysql -uroot -e "GRANT USAGE ON *.* TO '${APP_USER}'@'%';"
-TABLES="$(docker compose exec -T -e MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mercata_control_db \
-  mysql -uroot -N -e "SELECT table_name FROM information_schema.tables WHERE table_schema='${DB}' AND table_type='BASE TABLE' ORDER BY table_name;")"
-while IFS= read -r t; do
-  [[ -z "$t" ]] && continue
-  if [[ "$t" == "audit_log" ]]; then
-    docker compose exec -T -e MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mercata_control_db \
-      mysql -uroot -e "GRANT SELECT, INSERT ON \`${DB}\`.\`${t}\` TO '${APP_USER}'@'%';"
-  else
-    docker compose exec -T -e MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mercata_control_db \
-      mysql -uroot -e "GRANT SELECT, INSERT, UPDATE, DELETE ON \`${DB}\`.\`${t}\` TO '${APP_USER}'@'%';"
-  fi
-done <<< "$TABLES"
-docker compose exec -T -e MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mercata_control_db \
-  mysql -uroot -e "FLUSH PRIVILEGES;"
+bash scripts/regrant-control-db.sh
 
 docker compose up -d --force-recreate mercata_admin
 docker compose ps
