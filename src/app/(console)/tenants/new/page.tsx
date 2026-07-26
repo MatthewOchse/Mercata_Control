@@ -43,7 +43,11 @@ export default async function NewTenantProvisionPage() {
           Queues a host-scoped provision job. Pick any active billing plan;
           platform feature tier (online/retail) defaults from the plan.
           Internal secrets (AUTH / STORE_ADMIN / FLEET) are generated on the
-          target host. Billing-only prospects:{" "}
+          target host. Field-by-field rulebook:{" "}
+          <Link href="/help#onboard" className="text-accent-strong underline">
+            Help → Onboard a tenant
+          </Link>
+          . Billing-only prospects:{" "}
           <Link href="/tenants/prospect" className="text-accent-strong underline">
             New prospect
           </Link>
