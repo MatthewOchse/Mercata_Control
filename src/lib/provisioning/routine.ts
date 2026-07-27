@@ -13,6 +13,7 @@ import {
   writeTenantEnvAssembled,
 } from "@/lib/provisioning/secrets";
 import { formatCmd, runShell } from "@/lib/provisioning/shell";
+import { runMysqlCli } from "@/lib/provisioning/mysql-cli";
 
 export type ProvisionOutcome = "succeeded" | "awaiting_env" | "failed";
 
@@ -247,27 +248,35 @@ async function databaseLikelyExists(
     process.env.PROVISION_MYSQL_PASSWORD || process.env.MYSQL_PASSWORD || "";
   redactor.track(password);
 
-  const result = await runShell({
-    cmd: "mysql",
-    args: [
-      `-h${host}`,
-      `-u${user}`,
-      ...(password ? [`-p${password}`] : []),
-      "-N",
-      "-e",
-      `SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='${ctx.job.db_name.replace(/'/g, "")}'`,
-    ],
-    cwd: ctx.host.fleetRepoRoot,
-    redactor,
-    timeoutMs: 30_000,
-  });
-  if (result.code !== 0) {
+  try {
+    const result = await runMysqlCli({
+      host,
+      port: ctx.host.provisionDbPort,
+      user,
+      password,
+      sqlArgs: [
+        "-N",
+        "-e",
+        `SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='${ctx.job.db_name.replace(/'/g, "")}'`,
+      ],
+      cwd: ctx.host.fleetRepoRoot,
+      redactor,
+      timeoutMs: 30_000,
+    });
+    if (result.code !== 0) {
+      await ctx.log(
+        "db-exists probe inconclusive (mysql client failed) — will try provision",
+      );
+      return false;
+    }
+    return result.stdout.trim() === "1";
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
     await ctx.log(
-      "db-exists probe inconclusive (mysql client failed) — will try provision",
+      `db-exists probe inconclusive (${redactor.redact(msg)}) — will try provision`,
     );
     return false;
   }
-  return result.stdout.trim() === "1";
 }
 
 async function stepTenantProvision(
@@ -379,23 +388,27 @@ async function seedDefaultCategories(
   await ctx.log(
     `seeding default categories: ${DEFAULT_CATEGORIES.map((c) => c.name).join(", ")}`,
   );
-  const result = await runShell({
-    cmd: "mysql",
-    args: [
-      `-h${host}`,
-      `-u${user}`,
-      ...(password ? [`-p${password}`] : []),
-      "-e",
-      sql,
-    ],
-    cwd: ctx.host.fleetRepoRoot,
-    redactor,
-    timeoutMs: 30_000,
-  });
-  await logShell(ctx, redactor, "seed categories", result);
-  if (result.code !== 0) {
+  try {
+    const result = await runMysqlCli({
+      host,
+      port: ctx.host.provisionDbPort,
+      user,
+      password,
+      sqlArgs: ["-e", sql],
+      cwd: ctx.host.fleetRepoRoot,
+      redactor,
+      timeoutMs: 30_000,
+    });
+    await logShell(ctx, redactor, "seed categories", result);
+    if (result.code !== 0) {
+      await ctx.log(
+        "WARN: category seed failed (non-fatal if table/permissions differ)",
+      );
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
     await ctx.log(
-      "WARN: category seed failed (non-fatal if table/permissions differ)",
+      `WARN: category seed skipped (${redactor.redact(msg)})`,
     );
   }
 }
